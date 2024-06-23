@@ -1,0 +1,230 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+)
+
+// this should only be used for infallible commands!
+func get_cmd_output(cmd string, args ...string) string { // {{{
+	bytes, err := exec.Command(cmd, args...).Output()
+	if err != nil {
+		log.Fatal(err)
+	}
+	return strings.TrimSpace(string(bytes))
+} // }}}
+
+func read_file(path string) string { // {{{
+	f, err := os.Open(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	bytes, err := io.ReadAll(f)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return strings.TrimSpace(string(bytes))
+} // }}}
+func get_resp_body(url string) string { // {{{
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	bytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return string(bytes)
+} // }}}
+func filter(arr []string) []string { // {{{
+	// https://josh-weston.scribe.rip/golang-in-place-slice-operations-5607fd90217
+
+	// filter a slice in place without allocating, use two slices with the
+	// same backing array
+	// see also: https://stackoverflow.com/a/50183212
+
+	i := 0
+	for _, v := range arr {
+		if v != "" {
+			arr[i] = v // overwrite the original slice
+			i++
+		}
+	}
+	return arr[:i] // return slice of remaining elements
+} // }}}
+
+func bat() string {
+	path := "/sys/class/power_supply/BAT0/capacity"
+	if _, err := os.Stat(path); err != nil {
+		// TODO: get laptop battery
+		return ""
+	}
+	return read_file(path)
+}
+
+// func mail() {
+// 	// NOTMUCH_CONFIG="$HOME/.config/notmuch/config" notmuch count tag:inbox and tag:unread) # and date:today)
+// }
+
+func get_location() string { // {{{
+	resp, err := http.Get("https://ipinfo.io")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var obj map[string]interface{}
+
+	if err := json.NewDecoder(resp.Body).Decode(&obj); err != nil {
+		log.Fatal(err)
+	}
+
+	// https://go.dev/ref/spec#Type_assertions
+	return obj["city"].(string)
+} // }}}
+func weather(loc string) string { // {{{
+	// curl -sL ipinfo.io
+	// curl --max-time 1 --fail -sL "wttr.in/$location?format=%C,+%t+(%s)"
+
+	wt := get_resp_body("https://wttr.in/" + loc + "?format=%C,+%t+(%s)")
+	return wt
+} // }}}
+
+// '+%a %d/%m +%H:%M'
+func _time() string {
+	// refer to time.Layout
+	fmt := "Mon 02/01 15:04" // [Z07]"
+	return time.Now().Format(fmt)
+}
+
+func sys() string { // {{{
+	// free -h | awk 'NR==2 {print $3}' | tr -d i
+
+	mem := get_cmd_output("free", "-h")
+	mem = strings.Split(mem, "\n")[1]
+	mem = strings.Fields(mem)[2]
+	mem = strings.TrimRight(mem, "i")
+
+	// sensors -u | grep temp1_input | sort | tail -n1 | cut -d' ' -f4 | cut -d. -f1
+
+	sensors := get_cmd_output("sensors", "-u")
+	var max_temp string
+	for _, line := range strings.Split(sensors, "\n") {
+		if strings.Contains(line, "temp1_input") {
+			temp := strings.Fields(line)[1]
+			// don't bother with strconv.Atoi
+			if strings.Compare(temp, max_temp) > 0 {
+				max_temp = temp
+			}
+		}
+	}
+	max_temp, _, _ = strings.Cut(max_temp, ".")
+	// fmt.Println(max_temp)
+
+	// top -b -n1 | grep %Cpu | awk '{print $2}'
+
+	var cpu string = "?"
+	cpu_out := get_cmd_output("top", "-b", "-n1")
+	for _, line := range strings.Split(cpu_out, "\n") {
+		if strings.Contains(line, "%Cpu") {
+			cpu = strings.Fields(line)[1]
+			break
+		}
+	}
+
+	return fmt.Sprintf("%s%%, %s, %s°C", cpu, mem, max_temp)
+} // }}}
+
+func disk() string {
+	// df -h / /dev/sda?*
+	df := "df -h / /dev/sda?*" // exec.Command does not do shell expansion!
+	out := get_cmd_output("sh", "-c", df)
+	var arr []string
+	for _, line := range strings.Split(out, "\n")[1:] {
+		arr = append(arr, strings.Fields(line)[3])
+	}
+	return strings.Join(arr, " ")
+}
+
+func nowplaying() string {
+	status, err := exec.Command("playerctl", "status").Output()
+	if err != nil {
+		return ""
+	}
+
+	np := get_cmd_output(
+		"playerctl",
+		"metadata",
+		"--format",
+		"{{ playerName }}: {{ artist }} - {{ title }}",
+	)
+
+	if strings.TrimSpace(string(status)) == "paused" {
+		np = "⏸ " + np
+	}
+
+	return np
+}
+
+func fast_loop() []string {
+	return []string{
+		nowplaying(),
+		get_cmd_output("iwgetid", "-r"),
+		sys(),
+		disk(),
+		bat(),
+		_time(),
+	}
+}
+
+func slow_loop(loc string) []string {
+	// TODO:
+	// mail - notmuch new
+	// updates - checkupdates
+
+	return []string{weather(loc)}
+}
+
+func main() {
+	// init
+	name := read_file("/sys/devices/virtual/dmi/id/product_name")
+	loc := get_location()
+	sep := " | "
+
+	// https://stackoverflow.com/a/40364927
+	fast := time.NewTicker(5 * time.Second)
+	slow := time.NewTicker(10 * time.Minute)
+
+	a := fast_loop()
+	b := slow_loop(loc)
+
+	// time.Now().Sub(time.Now())
+
+	for {
+		select {
+		case <-fast.C:
+			a = fast_loop()
+		case <-slow.C:
+			b = slow_loop(loc)
+		}
+
+		merged := append(b, a...)
+		msg := strings.Join(filter(merged), sep)
+		msg = name + " > " + msg
+
+		// fmt.Println(msg)
+
+		if err := exec.Command("xsetroot", "-name", msg).Run(); err != nil {
+			log.Fatal(err)
+		}
+	}
+}
