@@ -193,19 +193,20 @@ func mail() string {
 	if _new == "0" {
 		return ""
 	}
-	return _new
+	return _new + " new mail"
 }
 
 func updates() string {
 	updates := get_cmd_output("checkupdates")
 	if updates != "" {
-		return strconv.Itoa(lines(updates))
+		return strconv.Itoa(lines(updates)) + " updates"
 	}
 	return updates
 }
 
 func fast_loop() []string {
 	return []string{
+		mail(),
 		nowplaying(),
 		get_cmd_output("iwgetid", "-r"),
 		sys(),
@@ -217,9 +218,28 @@ func fast_loop() []string {
 
 func slow_loop(loc string) []string {
 	return []string{
-		mail(),
-		updates(),
+		// mail(),
+		// updates(),
 		weather(loc),
+	}
+}
+
+type Cacher struct {
+	f     func() string
+	val   string
+	count int
+}
+
+// Caches are checked slowly when empty, but quickly when non-empty (so that we
+// can "clear" the notif)
+func (cache *Cacher) update() { // https://gobyexample.com/methods
+	if cache.val != "" {
+		cache.val = cache.f()
+	} else if cache.count > 120 { // 10 min / 5 s = 120
+		// TODO: we should have a time.Duration struct field
+		cache.count = 0
+	} else {
+		cache.count += 1
 	}
 }
 
@@ -236,17 +256,21 @@ func main() {
 	a := fast_loop()
 	b := slow_loop(loc)
 
-	// time.Now().Sub(time.Now())
+	mail_cache := Cacher{mail, mail(), 0}
 
 	for {
 		select {
 		case <-fast.C:
 			a = fast_loop()
+
+			mail_cache.update()
+
 		case <-slow.C:
 			b = slow_loop(loc)
 		}
 
 		merged := append(b, a...)
+		merged = append([]string{mail_cache.val}, merged...)
 		msg := strings.Join(filter(merged), sep)
 		msg = name + " > " + msg
 
