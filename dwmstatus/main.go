@@ -1,3 +1,7 @@
+// A rewrite of a 3+ year-old Bash script. I could never be bothered to
+// properly implement 2 loops with different intervals in Bash, but Go makes
+// this trivial.
+
 package main
 
 import (
@@ -8,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -62,19 +67,13 @@ func filter(arr []string) []string { // {{{
 	}
 	return arr[:i] // return slice of remaining elements
 } // }}}
-
-func bat() string {
-	path := "/sys/class/power_supply/BAT0/capacity"
-	if _, err := os.Stat(path); err != nil {
-		// TODO: get laptop battery
-		return ""
+func lines(s string) int { // {{{
+	l := strings.Count(s, "\n")
+	if string(s[len(s)-1]) != "\n" {
+		l += 1
 	}
-	return read_file(path)
-}
-
-// func mail() {
-// 	// NOTMUCH_CONFIG="$HOME/.config/notmuch/config" notmuch count tag:inbox and tag:unread) # and date:today)
-// }
+	return l
+} // }}}
 
 func get_location() string { // {{{
 	resp, err := http.Get("https://ipinfo.io")
@@ -98,6 +97,15 @@ func weather(loc string) string { // {{{
 	wt := get_resp_body("https://wttr.in/" + loc + "?format=%C,+%t+(%s)")
 	return wt
 } // }}}
+
+func bat() string {
+	path := "/sys/class/power_supply/BAT0/capacity"
+	if _, err := os.Stat(path); err != nil {
+		// TODO: get laptop battery
+		return ""
+	}
+	return read_file(path)
+}
 
 // '+%a %d/%m +%H:%M'
 func _time() string {
@@ -155,7 +163,7 @@ func disk() string {
 	return strings.Join(arr, " ")
 }
 
-func nowplaying() string {
+func nowplaying() string { // {{{
 	status, err := exec.Command("playerctl", "status").Output()
 	if err != nil {
 		return ""
@@ -168,11 +176,32 @@ func nowplaying() string {
 		"{{ playerName }}: {{ artist }} - {{ title }}",
 	)
 
-	if strings.TrimSpace(string(status)) == "paused" {
+	if strings.Contains(string(status), "paused") {
 		np = "⏸ " + np
 	}
 
 	return np
+} // }}}
+
+// fetching mail is handled by a systemd timer
+func mail() string {
+	// NOTMUCH_CONFIG="$HOME/.config/notmuch/config"
+	_new := get_cmd_output(
+		"notmuch",
+		strings.Split("count tag:inbox and tag:unread and date:today", " ")...,
+	)
+	if _new == "0" {
+		return ""
+	}
+	return _new
+}
+
+func updates() string {
+	updates := get_cmd_output("checkupdates")
+	if updates != "" {
+		return strconv.Itoa(lines(updates))
+	}
+	return updates
 }
 
 func fast_loop() []string {
@@ -187,11 +216,11 @@ func fast_loop() []string {
 }
 
 func slow_loop(loc string) []string {
-	// TODO:
-	// mail - notmuch new
-	// updates - checkupdates
-
-	return []string{weather(loc)}
+	return []string{
+		mail(),
+		updates(),
+		weather(loc),
+	}
 }
 
 func main() {
