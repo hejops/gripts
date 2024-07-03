@@ -67,6 +67,7 @@ func filter(arr []string) []string { // {{{
 	}
 	return arr[:i] // return slice of remaining elements
 } // }}}
+// count number of newlines in string
 func lines(s string) int { // {{{
 	l := strings.Count(s, "\n")
 	if string(s[len(s)-1]) != "\n" {
@@ -197,16 +198,18 @@ func mail() string {
 }
 
 func updates() string {
-	updates := get_cmd_output("checkupdates")
-	if updates != "" {
-		return strconv.Itoa(lines(updates)) + " updates"
+	// updates := get_cmd_output("checkupdates")
+
+	bytes, err := exec.Command("checkupdates").Output()
+	if err != nil {
+		return ""
 	}
-	return updates
+	return strconv.Itoa(lines(string(bytes))) + " updates"
 }
 
 func fast_loop() []string {
 	return []string{
-		mail(),
+		// mail(),
 		nowplaying(),
 		get_cmd_output("iwgetid", "-r"),
 		sys(),
@@ -216,27 +219,31 @@ func fast_loop() []string {
 	}
 }
 
+// Reserved for making network requests with no action to be taken. Typically,
+// this includes weather, stocks, etc.
 func slow_loop(loc string) []string {
 	return []string{
-		// mail(),
-		// updates(),
 		weather(loc),
 	}
 }
 
 type Cacher struct {
 	f     func() string
-	val   string
+	value string
 	count int
 }
 
 // Caches are checked slowly when empty, but quickly when non-empty (so that we
 // can "clear" the notif)
 func (cache *Cacher) update() { // https://gobyexample.com/methods
-	if cache.val != "" {
-		cache.val = cache.f()
-	} else if cache.count > 120 { // 10 min / 5 s = 120
-		// TODO: we should have a time.Duration struct field
+
+	// TODO: we should have a time.Duration struct field
+	interval := 120 // 10 min / 5 s
+
+	if cache.value != "" {
+		fmt.Println(cache.count, cache.value)
+		cache.value = cache.f()
+	} else if cache.count > interval {
 		cache.count = 0
 	} else {
 		cache.count += 1
@@ -249,6 +256,8 @@ func main() {
 	loc := get_location()
 	sep := " | "
 
+	// TODO: investigate slow startup; need some form of logging
+
 	// https://stackoverflow.com/a/40364927
 	fast := time.NewTicker(5 * time.Second)
 	slow := time.NewTicker(10 * time.Minute)
@@ -257,6 +266,7 @@ func main() {
 	b := slow_loop(loc)
 
 	mail_cache := Cacher{mail, mail(), 0}
+	updates_cache := Cacher{updates, updates(), 0}
 
 	for {
 		select {
@@ -264,13 +274,17 @@ func main() {
 			a = fast_loop()
 
 			mail_cache.update()
+			updates_cache.update()
 
 		case <-slow.C:
 			b = slow_loop(loc)
 		}
 
 		merged := append(b, a...)
-		merged = append([]string{mail_cache.val}, merged...)
+		merged = append(
+			[]string{mail_cache.value, updates_cache.value},
+			merged...,
+		)
 		msg := strings.Join(filter(merged), sep)
 		msg = name + " > " + msg
 
