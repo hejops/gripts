@@ -14,6 +14,14 @@ import (
 	"github.com/jszwec/csvutil"
 )
 
+func parseTime(bytes []byte, t *time.Time) error {
+	var err error
+	// 2015-08-20 03:48:30.669
+	// "01/02 03:04:05PM '06 -0700"
+	*t, err = time.Parse("2006-01-02 15:04:05.000", string(bytes))
+	return err
+}
+
 type Row struct {
 	// to deserialise into a struct, fields must:
 	// 1. be Uppercase
@@ -38,12 +46,15 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// dec.Register(parseTime) // deprecated
+	dec.WithUnmarshalers(csvutil.UnmarshalFunc(parseTime))
+
 	// string -> []Row
-	// note that we don't actually read a string or []string, rather we
-	// decode an entire csv object until we reach EOF
+	// note that we don't actually iterate through a []string, rather we
+	// Decode an entire csv object until we reach EOF
 
 	var rows []Row
-	for { // iteration is driven by Decode
+	for {
 
 		// i never liked this "direct the contents of some operation to
 		// an initialised var" idiom (Rust has it too, in some read
@@ -54,7 +65,6 @@ func main() {
 
 		// fmt.Println(row)
 		if err == io.EOF {
-			// if err != nil {
 			break
 		}
 		rows = append(rows, row)
@@ -62,12 +72,4 @@ func main() {
 
 	fmt.Println(rows)
 	fmt.Println(len(rows))
-
-	// for _, row := range rows {
-	// 	// fmt.Println(row)
-	// 	err := dec.Decode(row)
-	// 	if err != nil {
-	// 		log.Fatal(err)
-	// 	}
-	// }
 }
