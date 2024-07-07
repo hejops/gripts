@@ -1,0 +1,65 @@
+<!-- https://github.com/protomaps/PMTiles/blob/main/js/examples/leaflet.html -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css"
+    />
+
+    <style>
+      body,
+      #map {
+        height: 100vh; /* 100% height */
+        margin: 0px;
+      }
+    </style>
+  </head>
+  <title>map</title>
+  <body>
+    <div id="map"></div>
+
+    <!-- <script src="https://unpkg.com/maplibre-gl@3.3.1/dist/maplibre-gl.js"></script> -->
+    <script src="https://unpkg.com/leaflet@1.9.0/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js"></script>
+
+    <script type="text/javascript">
+      // cannot zoom above 3
+      const map = L.map("map").setView([51, 10], 3);
+
+      // see also:
+      // https://github.com/Basisvisualisierung/vt-landing-page/raw/38a568b1d7580c92db81f1e52b19530f16324700/code_examples/leaflet.html (json)
+      // https://github.com/bertt/terrain_tiles/raw/6f0a120caf204f0eb4d89e69a754c4df04e978b2/spain/index_pmtiles.html (maplibre-gl)
+      // https://github.com/r-spatial/leafem/issues/73#issuecomment-1826054434 (maplibre-gl)
+
+      // https://pmtiles.io/typedoc/classes/PMTiles.html
+      // because PMTiles expects a url (not fname), using 'self-hosted' tiles
+      // is not trivial
+      // pmtiles show "https://build.protomaps.com/$(date -I | tr -d '-').pmtiles"
+      // pmtiles extract https://build.protomaps.com/$(date -I | tr -d '-').pmtiles my_area.pmtiles --bbox=4.742883,51.830755,5.552837,52.256198
+      // https://maps.protomaps.com/
+
+      const p = new pmtiles.PMTiles(
+        // low-res tiles, but good enough for country-level
+        "https://pmtiles.io/stamen_toner(raster)CC-BY+ODbL_z3.pmtiles",
+      );
+
+      p.getHeader().then((h) => {
+        let layer = pmtiles.leafletRasterLayer(p, {});
+        layer.addTo(map);
+      });
+
+      // https://leafletjs.com/examples/quick-start/
+      {{range .rows}}
+        L.circle([{{.Lat}}, {{.Long}}], {
+            color: 'red',
+            radius: 20000,
+      }).bindPopup('{{.LastName}} ({{.Born}} - {{.Died}}, {{.Place}})').addTo(map);
+      {{end}}
+
+      //
+    </script>
+  </body>
+</html>
