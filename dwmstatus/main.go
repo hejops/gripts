@@ -17,13 +17,27 @@ import (
 	"time"
 )
 
-// this should only be used for infallible commands!
-func get_cmd_output(cmd string, args ...string) string { // {{{
-	bytes, err := exec.Command(cmd, args...).Output()
+// note: error checking is not really done in the Cmd-related functions
+
+// internal; should only be used if env is required. otherwise, use
+// getCmdOutput
+func execRawCommand(cmd exec.Cmd) string { // {{{
+	bytes, err := cmd.Output()
 	if err != nil {
 		log.Fatal(err)
 	}
 	return strings.TrimSpace(string(bytes))
+} // }}}
+
+// if any arg contains a space
+func getCmdOutput(cmd string, args ...string) string { // {{{
+	return execRawCommand(*exec.Command(cmd, args...))
+} // }}}
+
+// simpler if quoting not required (i.e. when no arg contains a space)
+func getCmdOutputLazy(cmd string) string { // {{{
+	args := strings.Split(cmd, " ")
+	return execRawCommand(*exec.Command(args[0], args[1:]...))
 } // }}}
 
 func read_file(path string) string { // {{{
@@ -118,14 +132,13 @@ func _time() string {
 func sys() string { // {{{
 	// free -h | awk 'NR==2 {print $3}' | tr -d i
 
-	mem := get_cmd_output("free", "-h")
-	mem = strings.Split(mem, "\n")[1]
-	mem = strings.Fields(mem)[2]
+	mem := getCmdOutputLazy("free -Lh")
+	mem = strings.Fields(mem)[5]
 	mem = strings.TrimRight(mem, "i")
 
 	// sensors -u | grep temp1_input | sort | tail -n1 | cut -d' ' -f4 | cut -d. -f1
 
-	sensors := get_cmd_output("sensors", "-u")
+	sensors := getCmdOutputLazy("sensors -u")
 	var max_temp string
 	for _, line := range strings.Split(sensors, "\n") {
 		if strings.Contains(line, "temp1_input") {
@@ -142,7 +155,7 @@ func sys() string { // {{{
 	// top -b -n1 | grep %Cpu | awk '{print $2}'
 
 	var cpu string = "?"
-	cpu_out := get_cmd_output("top", "-b", "-n1")
+	cpu_out := getCmdOutputLazy("top -b -n1")
 	for _, line := range strings.Split(cpu_out, "\n") {
 		if strings.Contains(line, "%Cpu") {
 			cpu = strings.Fields(line)[1]
@@ -155,11 +168,12 @@ func sys() string { // {{{
 
 func disk() string {
 	// df -h / /dev/sda?*
-	df := "df -h / /dev/sda?*" // exec.Command does not do shell expansion!
-	out := get_cmd_output("sh", "-c", df)
+	// exec.Command does not do shell expansion!
+	df := "df --human-readable --output=avail / /dev/sda?*"
+	out := getCmdOutput("sh", "-c", df)
 	var arr []string
 	for _, line := range strings.Split(out, "\n")[1:] {
-		arr = append(arr, strings.Fields(line)[3])
+		arr = append(arr, strings.TrimSpace(line))
 	}
 	return strings.Join(arr, " ")
 }
@@ -170,14 +184,14 @@ func nowplaying() string { // {{{
 		return ""
 	}
 
-	np := get_cmd_output(
+	np := getCmdOutput(
 		"playerctl",
 		"metadata",
 		"--format",
 		"{{ playerName }}: {{ artist }} - {{ title }}",
 	)
 
-	if strings.Contains(string(status), "paused") {
+	if strings.Contains(string(status), "Paused") {
 		np = "⏸ " + np
 	}
 
@@ -186,11 +200,14 @@ func nowplaying() string { // {{{
 
 // fetching mail is handled by a systemd timer
 func mail() string {
-	// NOTMUCH_CONFIG="$HOME/.config/notmuch/config"
-	_new := get_cmd_output(
+	cmd := exec.Command(
 		"notmuch",
-		strings.Split("count tag:inbox and tag:unread and date:today", " ")...,
+		// strings.Split("count tag:inbox and tag:unread and date:today", " ")...,
+		"count",
+		"tag:inbox and tag:unread and date:today",
 	)
+	cmd.Env = os.Environ()
+	_new := execRawCommand(*cmd)
 	if _new == "0" {
 		return ""
 	}
@@ -198,9 +215,7 @@ func mail() string {
 }
 
 func updates() string {
-	// updates := get_cmd_output("checkupdates")
-
-	bytes, err := exec.Command("checkupdates").Output()
+	bytes, err := exec.Command("checkupdates").Output() // exit code 2 if no updates
 	if err != nil {
 		return ""
 	}
@@ -211,7 +226,8 @@ func fast_loop() []string {
 	return []string{
 		// mail(),
 		nowplaying(),
-		get_cmd_output("iwgetid", "-r"),
+		// get_cmd_output("iwgetid", "-r"),
+		getCmdOutputLazy("iwgetid -r"),
 		sys(),
 		disk(),
 		bat(),
@@ -241,13 +257,13 @@ func (cache *Cacher) update() { // https://gobyexample.com/methods
 	interval := 120 // 10 min / 5 s
 
 	if cache.value != "" {
-		fmt.Println(cache.count, cache.value)
 		cache.value = cache.f()
 	} else if cache.count > interval {
 		cache.count = 0
 	} else {
 		cache.count += 1
 	}
+	// fmt.Println(cache.count, cache.value)
 }
 
 func main() {
@@ -255,8 +271,6 @@ func main() {
 	name := read_file("/sys/devices/virtual/dmi/id/product_name")
 	loc := get_location()
 	sep := " | "
-
-	// TODO: investigate slow startup; need some form of logging
 
 	// https://stackoverflow.com/a/40364927
 	fast := time.NewTicker(5 * time.Second)
@@ -266,7 +280,12 @@ func main() {
 	b := slow_loop(loc)
 
 	mail_cache := Cacher{mail, mail(), 0}
-	updates_cache := Cacher{updates, updates(), 0}
+	// updates_cache := Cacher{updates, updates(), 0}
+
+	// env := []byte(strings.Join(os.Environ(), "\n"))
+	// if os.WriteFile("/tmp/foo", env, 0666) != nil {
+	// 	log.Fatal("env")
+	// }
 
 	for {
 		select {
@@ -274,7 +293,7 @@ func main() {
 			a = fast_loop()
 
 			mail_cache.update()
-			updates_cache.update()
+			// updates_cache.update()
 
 		case <-slow.C:
 			b = slow_loop(loc)
@@ -282,7 +301,10 @@ func main() {
 
 		merged := append(b, a...)
 		merged = append(
-			[]string{mail_cache.value, updates_cache.value},
+			[]string{
+				mail_cache.value,
+				// updates_cache.value,
+			},
 			merged...,
 		)
 		msg := strings.Join(filter(merged), sep)
