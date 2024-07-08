@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# set -x
+cd "$(realpath "$0" | xargs dirname)"
+
 # dependencies: go (duh), upx, sponge
 
 for d in $(git ls-files | cut -d/ -f1 | sort -u); do
 
-	pushd "$d" > /dev/null
+	pushd "$d" > /dev/null || continue
 
 	# `go build foo.go` will create a binary foo (instead of the package name)!
 	go build -ldflags "-s -w"
