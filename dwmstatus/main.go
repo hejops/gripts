@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -21,23 +20,35 @@ import (
 
 // internal; should only be used if env is required. otherwise, use
 // getCmdOutput
-func execRawCommand(cmd exec.Cmd) string { // {{{
+func execRawCommand(cmd exec.Cmd) (string, error) { // {{{
 	bytes, err := cmd.Output()
 	if err != nil {
-		log.Fatal(err)
+		return "", err
+		// log.Fatal(err)
 	}
-	return strings.TrimSpace(string(bytes))
+	return strings.TrimSpace(string(bytes)), nil
 } // }}}
 
 // if any arg contains a space
 func getCmdOutput(cmd string, args ...string) string { // {{{
-	return execRawCommand(*exec.Command(cmd, args...))
+	out, _ := execRawCommand(*exec.Command(cmd, args...))
+	return out
 } // }}}
 
 // simpler if quoting not required (i.e. when no arg contains a space)
 func getCmdOutputLazy(cmd string) string { // {{{
 	args := strings.Split(cmd, " ")
-	return execRawCommand(*exec.Command(args[0], args[1:]...))
+	out, _ := execRawCommand(*exec.Command(args[0], args[1:]...))
+	return out
+} // }}}
+
+func getCmdOutputWithFallback(cmd string, fallback string) string { // {{{
+	args := strings.Split(cmd, " ")
+	out, err := execRawCommand(*exec.Command(args[0], args[1:]...))
+	if err != nil {
+		return fallback
+	}
+	return out
 } // }}}
 
 func read_file(path string) string { // {{{
@@ -81,25 +92,27 @@ func filter(arr []string) []string { // {{{
 	}
 	return arr[:i] // return slice of remaining elements
 } // }}}
-// count number of newlines in string
-func lines(s string) int { // {{{
-	l := strings.Count(s, "\n")
-	if string(s[len(s)-1]) != "\n" {
-		l += 1
-	}
-	return l
-} // }}}
 
-func get_location() string { // {{{
+// // count number of newlines in string
+// func lines(s string) int { // {{{
+// 	l := strings.Count(s, "\n")
+// 	if string(s[len(s)-1]) != "\n" {
+// 		l += 1
+// 	}
+// 	return l
+// } // }}}
+
+// returns empty string on encountering any error
+func getLocation() string { // {{{
 	resp, err := http.Get("https://ipinfo.io")
 	if err != nil {
-		log.Fatal(err)
+		return ""
 	}
 	defer resp.Body.Close()
 	var obj map[string]interface{}
 
 	if err := json.NewDecoder(resp.Body).Decode(&obj); err != nil {
-		log.Fatal(err)
+		return ""
 	}
 
 	// https://go.dev/ref/spec#Type_assertions
@@ -108,6 +121,10 @@ func get_location() string { // {{{
 func weather(loc string) string { // {{{
 	// curl -sL ipinfo.io
 	// curl --max-time 1 --fail -sL "wttr.in/$location?format=%C,+%t+(%s)"
+
+	if loc == "" {
+		return ""
+	}
 
 	wt := get_resp_body("https://wttr.in/" + loc + "?format=%C,+%t+(%s)")
 	return wt
@@ -202,32 +219,29 @@ func nowplaying() string { // {{{
 func mail() string {
 	cmd := exec.Command(
 		"notmuch",
-		// strings.Split("count tag:inbox and tag:unread and date:today", " ")...,
-		"count",
-		"tag:inbox and tag:unread and date:today",
+		strings.Split("count tag:inbox and tag:unread and date:today", " ")...,
 	)
 	cmd.Env = os.Environ()
-	_new := execRawCommand(*cmd)
-	if _new == "0" {
+	out, _ := execRawCommand(*cmd)
+	if out == "0" {
 		return ""
 	}
-	return _new + " new mail"
+	return out + " new mail"
 }
 
-func updates() string {
-	bytes, err := exec.Command("checkupdates").Output() // exit code 2 if no updates
-	if err != nil {
-		return ""
-	}
-	return strconv.Itoa(lines(string(bytes))) + " updates"
-}
+// func updates() string {
+// 	bytes, err := exec.Command("checkupdates").Output() // exit code 2 if no updates
+// 	if err != nil {
+// 		return ""
+// 	}
+// 	return strconv.Itoa(lines(string(bytes))) + " updates"
+// }
 
 func fast_loop() []string {
 	return []string{
 		// mail(),
 		nowplaying(),
-		// get_cmd_output("iwgetid", "-r"),
-		getCmdOutputLazy("iwgetid -r"),
+		getCmdOutputWithFallback("iwgetid -r", "No network"),
 		sys(),
 		disk(),
 		bat(),
@@ -259,6 +273,7 @@ func (cache *Cacher) update() { // https://gobyexample.com/methods
 	if cache.value != "" {
 		cache.value = cache.f()
 	} else if cache.count > interval {
+		cache.value = cache.f()
 		cache.count = 0
 	} else {
 		cache.count += 1
@@ -269,7 +284,7 @@ func (cache *Cacher) update() { // https://gobyexample.com/methods
 func main() {
 	// init
 	name := read_file("/sys/devices/virtual/dmi/id/product_name")
-	loc := get_location()
+	loc := getLocation() // could be a const, but no lazy static
 	sep := " | "
 
 	// https://stackoverflow.com/a/40364927
@@ -279,13 +294,8 @@ func main() {
 	a := fast_loop()
 	b := slow_loop(loc)
 
-	mail_cache := Cacher{mail, mail(), 0}
+	mail_cache := Cacher{f: mail, value: mail()}
 	// updates_cache := Cacher{updates, updates(), 0}
-
-	// env := []byte(strings.Join(os.Environ(), "\n"))
-	// if os.WriteFile("/tmp/foo", env, 0666) != nil {
-	// 	log.Fatal("env")
-	// }
 
 	for {
 		select {
@@ -299,6 +309,7 @@ func main() {
 			b = slow_loop(loc)
 		}
 
+		// [slow] + [fast]
 		merged := append(b, a...)
 		merged = append(
 			[]string{
@@ -309,6 +320,10 @@ func main() {
 		)
 		msg := strings.Join(filter(merged), sep)
 		msg = name + " > " + msg
+
+		// if os.WriteFile("/tmp/foo", []byte(fmt.Sprint(time.Now(), mail_cache.value)), 0666) != nil {
+		// 	log.Fatal("env")
+		// }
 
 		// fmt.Println(msg)
 
