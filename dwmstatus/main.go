@@ -127,6 +127,9 @@ func weather(loc string) string { // {{{
 	}
 
 	wt := get_resp_body("https://wttr.in/" + loc + "?format=%C,+%t+(%s)")
+	if strings.Contains(wt, "Sorry") {
+		return ""
+	}
 	return wt
 } // }}}
 
