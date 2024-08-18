@@ -6,53 +6,39 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
-	"path"
+	"path/filepath"
+	"strings"
 )
 
 func main() {
 	u, _ := user.Current()
-	dir := u.HomeDir + "/wallpaper"
+	dir := filepath.Join(u.HomeDir, "wallpaper")
 
-	// files := []string{}
-	// err := filepath.Walk(dir, func(
-	// 	// Walk is annoying to use since it requires this specific type
-	// 	// sig (without explicitly saying it -- see example), but it does
-	// 	// provide fullpath (like os.scandir).
-	// 	//
-	// 	// the problem: it is recursive, so we can't stop at depth 1
-	// 	path string, info os.FileInfo, err error,
-	// ) error {
-	// 	if !info.IsDir() {
-	// 		files = append(files, path)
-	// 	}
-	// 	return err
-	// })
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+	files := []string{}
+	err := filepath.Walk(dir, func(
+		// Walk is annoying to use since it requires this specific type
+		// sig (without explicitly saying it -- see example), but it
+		// does provide fullpath (like os.scandir), and is better
+		// generalisable to arbitrary directory structures
+		path string, info os.FileInfo, e error,
+	) error {
+		if strings.Contains(path, ".git") {
+			return nil
+		}
 
-	// entries, err := ioutil.ReadDir(dir) // deprecated in favour of os.ReadDir
-	entries, err := os.ReadDir(dir)
+		if !info.IsDir() {
+			files = append(files, path)
+		}
+		return e
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	files := []string{}
-	for _, e := range entries {
-		if !e.IsDir() {
-			// just like Python os.listdir, ReadDir only returns
-			// basenames
-			files = append(files, path.Join(dir, e.Name()))
-		}
-	}
-	rand.Shuffle(len(files), func(i, j int) {
-		files[i], files[j] = files[j], files[i]
-	})
-	wall := files[0]
-
-	if err := exec.Command(
-		"feh", "--no-fehbg", "--bg-fill", wall,
-	).Run(); err != nil {
+	// i could select 2 images, but i don't use 2 monitors any more
+	if exec.Command(
+		"feh", "--no-fehbg", "--bg-fill", files[rand.N(len(files))-1],
+	).Run() != nil {
 		log.Fatal(err)
 	}
 }
