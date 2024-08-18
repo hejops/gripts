@@ -10,11 +10,20 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 )
+
+func die(err error) {
+	lf, _ := os.OpenFile("/tmp/dwmstatus", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	log.New(lf, "dwmstatus", log.LstdFlags).Println(err)
+}
 
 // note: error checking is not really done in the Cmd-related functions
 
@@ -24,7 +33,7 @@ func execRawCommand(cmd exec.Cmd) (string, error) { // {{{
 	bytes, err := cmd.Output()
 	if err != nil {
 		return "", err
-		// log.Fatal(err)
+		// die(err)
 	}
 	return strings.TrimSpace(string(bytes)), nil
 } // }}}
@@ -54,25 +63,29 @@ func getCmdOutputWithFallback(cmd string, fallback string) string { // {{{
 func read_file(path string) string { // {{{
 	f, err := os.Open(path)
 	if err != nil {
-		log.Fatal(err)
+		die(err)
 	}
 	defer f.Close()
 	bytes, err := io.ReadAll(f)
 	if err != nil {
-		log.Fatal(err)
+		die(err)
 	}
 	return strings.TrimSpace(string(bytes))
 } // }}}
+// returns empty string on Get failure
 func get_resp_body(url string) string { // {{{
-	resp, err := http.Get(url)
+	// resp, err := http.Get(url)
+	c := http.Client{Timeout: time.Second * 3}
+	resp, err := c.Get(url)
 	if err != nil {
-		log.Fatal(err)
+		log.Println("Get failed:", url)
+		return ""
 	}
 	defer resp.Body.Close()
 
 	bytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal(err)
+		die(err)
 	}
 	return string(bytes)
 } // }}}
@@ -102,6 +115,7 @@ func filter(arr []string) []string { // {{{
 // 	return l
 // } // }}}
 
+// note: accuracy tends to be poor
 // returns empty string on encountering any error
 func getLocation() string { // {{{
 	resp, err := http.Get("https://ipinfo.io")
@@ -126,7 +140,10 @@ func weather(loc string) string { // {{{
 		return ""
 	}
 
-	wt := get_resp_body("https://wttr.in/" + loc + "?format=%C,+%t+(%s)")
+	wt := get_resp_body("https://wttr.in/" + url.QueryEscape(loc) + "?format=%C,+%t+(%s)")
+	if wt == "" {
+		log.Println("failed to get weather for", loc)
+	}
 	if strings.Contains(wt, "Sorry") {
 		return ""
 	}
@@ -242,9 +259,10 @@ func mail() string {
 
 func fast_loop() []string {
 	return []string{
-		// mail(),
+		// potentially fallible
 		nowplaying(),
 		getCmdOutputWithFallback("iwgetid -r", "No network"),
+		// the following cmds should all be infallible
 		sys(),
 		disk(),
 		bat(),
@@ -324,14 +342,12 @@ func main() {
 		msg := strings.Join(filter(merged), sep)
 		msg = name + " > " + msg
 
-		// if os.WriteFile("/tmp/foo", []byte(fmt.Sprint(time.Now(), mail_cache.value)), 0666) != nil {
-		// 	log.Fatal("env")
-		// }
-
 		// fmt.Println(msg)
 
+		// TODO: wide chars (e.g. korean) cause date to be truncated
+
 		if err := exec.Command("xsetroot", "-name", msg).Run(); err != nil {
-			log.Fatal(err)
+			die(err)
 		}
 	}
 }
