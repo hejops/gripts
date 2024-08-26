@@ -5,6 +5,7 @@
 package main
 
 import (
+	// Goal: no 3rd party imports
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,10 +20,20 @@ import (
 	"time"
 )
 
-const Separator = " | "
+const (
+	// Divides sections in the status bar
+	Separator = " | "
+
+	// e.g. Mon 26/08 12:44
+	TimeFmt = "Mon 02/01 15:04"
+	// [Z07]"
+
+	// Only relevant for laptops
+	BatteryCapacity = "/sys/class/power_supply/BAT0/capacity"
+)
 
 var (
-	MachineName = read_file("/sys/devices/virtual/dmi/id/product_name")
+	MachineName = readFile("/sys/devices/virtual/dmi/id/product_name")
 	Location    = getLocation()
 	MailCache   = Cacher{f: mail, value: mail()}
 )
@@ -32,6 +43,7 @@ func die(err error) {
 	// if err != nil {
 	// 	panic(err)
 	// }
+	defer lf.Close()
 	log.New(lf, "dwmstatus", log.LstdFlags).Println(err)
 }
 
@@ -56,13 +68,13 @@ func getCmdOutput(cmd string, args ...string) string { // {{{
 
 // simpler if quoting not required (i.e. when no arg contains a space)
 func getCmdOutputLazy(cmd string) string { // {{{
-	args := strings.Split(cmd, " ")
+	args := strings.Fields(cmd)
 	out, _ := execRawCommand(*exec.Command(args[0], args[1:]...))
 	return out
 } // }}}
 
 func getCmdOutputWithFallback(cmd string, fallback string) string { // {{{
-	args := strings.Split(cmd, " ")
+	args := strings.Fields(cmd)
 	out, err := execRawCommand(*exec.Command(args[0], args[1:]...))
 	if err != nil {
 		return fallback
@@ -70,7 +82,7 @@ func getCmdOutputWithFallback(cmd string, fallback string) string { // {{{
 	return out
 } // }}}
 
-func read_file(path string) string { // {{{
+func readFile(path string) string { // {{{
 	f, err := os.Open(path)
 	if err != nil {
 		die(err)
@@ -83,7 +95,7 @@ func read_file(path string) string { // {{{
 	return strings.TrimSpace(string(bytes))
 } // }}}
 // returns empty string on Get failure
-func get_resp_body(url string) string { // {{{
+func getRespBody(url string) string { // {{{
 	// resp, err := http.Get(url)
 	c := http.Client{Timeout: time.Second * 3}
 	resp, err := c.Get(url)
@@ -99,7 +111,9 @@ func get_resp_body(url string) string { // {{{
 	}
 	return string(bytes)
 } // }}}
+// Remove empty elements from arr
 func filter(arr []string) []string { // {{{
+	// i would use a generic, but idk how to generalise null type
 	// https://josh-weston.scribe.rip/golang-in-place-slice-operations-5607fd90217
 
 	// filter a slice in place without allocating, use two slices with the
@@ -116,17 +130,12 @@ func filter(arr []string) []string { // {{{
 	return arr[:i] // return slice of remaining elements
 } // }}}
 
-// // count number of newlines in string
-// func lines(s string) int { // {{{
-// 	l := strings.Count(s, "\n")
-// 	if string(s[len(s)-1]) != "\n" {
-// 		l += 1
-// 	}
-// 	return l
-// } // }}}
-
-// note: accuracy tends to be poor
-// returns empty string on encountering any error
+// Determine current location using a geolocation service. Should only be run
+// once, on startup.
+//
+// Returns empty string on encountering any error.
+//
+// Note: accuracy tends to be poor
 func getLocation() string { // {{{
 	resp, err := http.Get("https://ipinfo.io")
 	if err != nil {
@@ -142,6 +151,7 @@ func getLocation() string { // {{{
 	// https://go.dev/ref/spec#Type_assertions
 	return obj["city"].(string)
 } // }}}
+// Uses wttr.in for ease of parsing
 func weather(loc string) string { // {{{
 	// curl -sL ipinfo.io
 	// curl --max-time 1 --fail -sL "wttr.in/$location?format=%C,+%t+(%s)"
@@ -150,7 +160,7 @@ func weather(loc string) string { // {{{
 		return ""
 	}
 
-	wt := get_resp_body("https://wttr.in/" + url.QueryEscape(loc) + "?format=%C,+%t+(%s)")
+	wt := getRespBody("https://wttr.in/" + url.QueryEscape(loc) + "?format=%C,+%t+(%s)")
 	if wt == "" {
 		log.Println("failed to get weather for", loc)
 	}
@@ -160,20 +170,17 @@ func weather(loc string) string { // {{{
 	return wt
 } // }}}
 
-func bat() string {
-	path := "/sys/class/power_supply/BAT0/capacity"
-	if _, err := os.Stat(path); err != nil {
-		// TODO: get laptop battery
+func battery() string {
+	if _, err := os.Stat(BatteryCapacity); err != nil {
 		return ""
 	}
-	return read_file(path)
+	return readFile(BatteryCapacity)
 }
 
 // '+%a %d/%m +%H:%M'
 func _time() string {
 	// refer to time.Layout
-	fmt := "Mon 02/01 15:04" // [Z07]"
-	return time.Now().Format(fmt)
+	return time.Now().Format(TimeFmt)
 }
 
 func sys() string { // {{{
@@ -249,7 +256,7 @@ func nowplaying() string { // {{{
 func mail() string {
 	cmd := exec.Command(
 		"notmuch",
-		strings.Split("count tag:inbox and tag:unread and date:today", " ")...,
+		strings.Fields("count tag:inbox and tag:unread and date:today")...,
 	)
 	cmd.Env = os.Environ()
 	out, _ := execRawCommand(*cmd)
@@ -267,7 +274,7 @@ func mail() string {
 // 	return strconv.Itoa(lines(string(bytes))) + " updates"
 // }
 
-func fast_loop() []string {
+func fastLoop() []string {
 	return []string{
 		// potentially fallible
 		nowplaying(),
@@ -275,14 +282,14 @@ func fast_loop() []string {
 		// the following cmds should all be infallible
 		sys(),
 		disk(),
-		bat(),
+		battery(),
 		_time(),
 	}
 }
 
 // Reserved for making network requests with no action to be taken. Typically,
 // this includes weather, stocks, etc.
-func slow_loop(loc string) []string {
+func slowLoop(loc string) []string {
 	return []string{
 		weather(loc),
 	}
@@ -345,6 +352,7 @@ func checkRestart() {
 			panic(err)
 		}
 		fmt.Println("killed", pid, procName)
+		// note: we assume at most one instance of dwmstatus is running
 		return fs.SkipAll
 	})
 	if err != nil {
@@ -359,19 +367,18 @@ func main() {
 	fast := time.NewTicker(5 * time.Second)
 	slow := time.NewTicker(10 * time.Minute)
 
-	a := fast_loop()
-	b := slow_loop(Location)
+	a := fastLoop()
+	b := slowLoop(Location)
 
 	for {
 		select {
 		case <-fast.C:
-			a = fast_loop()
+			a = fastLoop()
 
 			MailCache.update()
-			// updates_cache.update()
 
 		case <-slow.C:
-			b = slow_loop(Location)
+			b = slowLoop(Location)
 		}
 
 		// [slow] + [fast]
@@ -379,7 +386,6 @@ func main() {
 		merged = append(
 			[]string{
 				MailCache.value,
-				// updates_cache.value,
 			},
 			merged...,
 		)
