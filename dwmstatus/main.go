@@ -8,13 +8,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
+)
+
+const Separator = " | "
+
+var (
+	MachineName = read_file("/sys/devices/virtual/dmi/id/product_name")
+	Location    = getLocation()
+	MailCache   = Cacher{f: mail, value: mail()}
 )
 
 func die(err error) {
@@ -302,45 +312,79 @@ func (cache *Cacher) update() { // https://gobyexample.com/methods
 	// fmt.Println(cache.count, cache.value)
 }
 
+// Check if an existing dwmstatus instance is running, and, if found, kill it
+// before starting the new instance.
+func checkRestart() {
+	// https://github.com/mitchellh/go-ps/blob/master/process_linux.go
+
+	procName := filepath.Base(os.Args[0]) // either "main" (go run) or "dwmstatus" (binary)
+	if procName == "main" {
+		fmt.Println("exiting")
+		os.Exit(0)
+	}
+
+	err := filepath.WalkDir("/proc", func(path string, d fs.DirEntry, err error) error {
+		if d.IsDir() || filepath.Base(path) != "stat" {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			panic(err)
+		}
+
+		s := string(b)
+		start := strings.IndexRune(s, '(')
+		end := strings.IndexRune(s, ')')
+
+		if s[start+1:end] != procName {
+			return nil
+		}
+
+		pid := strings.Fields(s)[0]
+		if err := exec.Command("kill", pid).Run(); err != nil {
+			panic(err)
+		}
+		fmt.Println("killed", pid, procName)
+		return fs.SkipAll
+	})
+	if err != nil {
+		panic(err)
+	}
+}
+
 func main() {
-	// init
-	name := read_file("/sys/devices/virtual/dmi/id/product_name")
-	loc := getLocation() // could be a const, but no lazy static
-	sep := " | "
+	checkRestart()
 
 	// https://stackoverflow.com/a/40364927
 	fast := time.NewTicker(5 * time.Second)
 	slow := time.NewTicker(10 * time.Minute)
 
 	a := fast_loop()
-	b := slow_loop(loc)
-
-	mail_cache := Cacher{f: mail, value: mail()}
-	// updates_cache := Cacher{updates, updates(), 0}
+	b := slow_loop(Location)
 
 	for {
 		select {
 		case <-fast.C:
 			a = fast_loop()
 
-			mail_cache.update()
+			MailCache.update()
 			// updates_cache.update()
 
 		case <-slow.C:
-			b = slow_loop(loc)
+			b = slow_loop(Location)
 		}
 
 		// [slow] + [fast]
 		merged := append(b, a...)
 		merged = append(
 			[]string{
-				mail_cache.value,
+				MailCache.value,
 				// updates_cache.value,
 			},
 			merged...,
 		)
-		msg := strings.Join(filter(merged), sep)
-		msg = name + " > " + msg
+		msg := strings.Join(filter(merged), Separator)
+		msg = MachineName + " > " + msg
 
 		// fmt.Println(msg)
 
