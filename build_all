@@ -3,24 +3,37 @@ set -euo pipefail
 
 cd "$(realpath "$0" | xargs dirname)"
 
+cat << EOF > README.md
+| package | description |
+| ------- | ----------- |
+EOF
+
 # dependencies: go (duh), upx, sponge
 
 for d in $(git ls-files | cut -d/ -f1 | sort -u); do
 
-	pushd "$d" > /dev/null || continue
+	pushd "$d" > /dev/null 2> /dev/null || continue
 
 	# `go build foo.go` will create a binary foo (instead of the package name)!
 	go build -ldflags "-s -w"
+
+	name=$(basename "$PWD")
+	desc=$(< main.go head -n1 | sed -r 's|^// ||g')
 
 	# --brute is usually overkill (think rust release mode)
 	# command -v upx > /dev/null &&
 	upx "$(basename "$PWD")" > /dev/null
 
 	# stat --format='%n %s' "$(basename "$PWD")"
-	du -csh "$(basename "$PWD")" | sponge > /dev/stdout | head -n1
+	du -csh "$(basename "$PWD")" | sponge /dev/stdout | head -n1
 
 	popd > /dev/null 2> /dev/null
 
 	# TODO: link to ~/.local/bin
 
+	line="| $name | $desc |"
+	echo "$line" >> README.md
+
 done
+
+prettier -w README.md
