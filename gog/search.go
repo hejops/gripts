@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path"
 	"strings"
+	"unicode"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -30,7 +32,13 @@ type SearchPackage struct {
 	Downloads int // TODO:
 }
 
+func isVer(name string) bool {
+	return name[0] == 'v' && unicode.IsNumber(rune(name[1]))
+}
+
+// Uses pkg.go.dev, which generally returns more results
 func findPackage(name string) []SearchPackage {
+	fmt.Println(PKG_SEARCH + name)
 	resp, err := http.Get(PKG_SEARCH + name)
 	if err != nil {
 		panic(err)
@@ -46,8 +54,9 @@ func findPackage(name string) []SearchPackage {
 	doc.Find("span").Each(func(i int, sel *goquery.Selection) {
 		if c, _ := sel.Attr("class"); c == "SearchSnippet-header-path" {
 			pkg := sel.Text()
-			pkg = pkg[1 : len(pkg)-1]
-			if path.Base(pkg) == name {
+			pkg = pkg[1 : len(pkg)-1] // strip parens
+			base := path.Base(pkg)
+			if base == name || isVer(base) {
 				// yeah...
 				syn := sel.Parent().Parent().Parent().Parent().Find("p").Text()
 				syn = strings.TrimSpace(syn)
