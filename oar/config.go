@@ -11,6 +11,9 @@ type Config struct {
 	Bandcamp struct {
 		Username string
 	}
+	Youtube struct {
+		Urls []string
+	}
 }
 
 func InitConfig() {

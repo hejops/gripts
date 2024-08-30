@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -49,7 +50,7 @@ func getBandcampLabels(username string) []BandcampLabel { // {{{
 
 	// fmt.Println(doc.First().Html())
 
-	// <button id="follow-unfollow_1986539" type="button" class="follow-unfollow ">
+	// <button id="follow-unfollow_12345" type="button" class="follow-unfollow ">
 	var id string
 	doc.Find("button").EachWithBreak(func(i int, s *goquery.Selection) bool {
 		if v, ex := s.Attr("id"); ex {
@@ -111,8 +112,6 @@ func (l *BandcampLabel) getReleases(maxAge int) []BandcampRelease { // {{{
 		return []BandcampRelease{}
 	}
 
-	// https://totaldissonanceworship.bandcamp.com/album/duality
-
 	albumUrls := []string{}
 	doc.Find("a").Each(func(i int, s *goquery.Selection) {
 		urlpath, ex := s.Attr("href")
@@ -173,7 +172,7 @@ func extractRelease(url string) BandcampRelease { // {{{
 	})
 	textDate = strings.TrimSpace(textDate)
 	textDate = textDate[strings.Index(textDate, " ")+1:]
-	t, _ := time.Parse("January 2, 2006", textDate)
+	t, _ := time.Parse(BC_DATE_FMT, textDate)
 	days := time.Since(t).Hours() / 24
 
 	return BandcampRelease{
@@ -183,3 +182,24 @@ func extractRelease(url string) BandcampRelease { // {{{
 		Age:      int(days),
 	}
 } // }}}
+
+func getBandcampWeek(username string) []BandcampRelease {
+	labels := getBandcampLabels(username)
+	var wg sync.WaitGroup
+	releases := []BandcampRelease{}
+	for i, label := range labels {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r := label.getReleases(7)
+			if len(r) == 0 {
+				return
+			}
+			fmt.Println(i, label.Name, len(r))
+			releases = append(releases, r...)
+		}()
+	}
+	wg.Wait()
+	fmt.Printf("found %d releases from %d labels\n", len(releases), len(labels))
+	return releases
+}
