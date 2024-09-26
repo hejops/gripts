@@ -1,8 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -14,12 +20,161 @@ type sql struct {
 	db *sqlx.DB // the inner DB, with all the typical methods
 }
 
-// TODO: fetch pages -> db.db
-func dumpDB() {
+type Artist struct {
+	Id   int
+	Name string
+	// Role string
+}
+
+type Label struct {
+	Id   int
+	Name string
+	// Catno string
+}
+
+const (
+	ApiPrefix = "https://api.discogs.com/"
+)
+
+// wrapper over sqlx.NamedExec. maybe gorm is easier?
+func insert(tx *sqlx.Tx, table string, m map[string]any) {
+	keys := Keys(m)
+	var ckeys []string
+	for _, k := range keys {
+		ckeys = append(ckeys, ":"+k)
+	}
+	_, err := tx.NamedExec(
+		`INSERT OR IGNORE INTO `+table+`
+			(`+strings.Join(keys, ",")+`)
+			VALUES
+			(`+strings.Join(ckeys, ",")+`)
+			`,
+		m,
+	)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func dumpDB(user string) {
 	// https://github.com/jmoiron/sqlx?tab=readme-ov-file#usage
 
-	// "/users/{USERNAME}/collection/folders/0/releases?per_page=250&page={i}"
-	// json -> struct -> row
+	u, _ := url.Parse(ApiPrefix)
+
+	path := fmt.Sprintf("/users/%s/collection/folders/0/releases", user)
+	u = u.JoinPath(path) // note: url.JoinPath can error, but URL.JoinPath does not
+
+	v := url.Values{}
+	v.Set("per_page", "250")
+
+	var x struct {
+		Pagination struct{ Pages int }
+		Releases   []struct {
+			DateAdded  string `json:"date_added"` // 2022-10-23T15:45:21-07:00
+			InstanceId int    `json:"instance_id"`
+			Rating     byte
+			BasicInfo  struct {
+				Id       int // resource_url is derived from this
+				MasterId int `json:"master_id"` // may be 0; master_url is derived from this
+				Title    string
+				Year     int
+				Genres   []string
+				Styles   []string
+
+				Artists []Artist
+				Labels  []Label
+				// Formats []Format
+			} `json:"basic_information"`
+		}
+	}
+
+	tx := s.db.MustBegin()
+
+	for i := 1; ; i++ {
+		v.Set("page", strconv.Itoa(i))
+		u.RawQuery = v.Encode()
+
+		req, err := http.NewRequest("GET", u.String(), nil)
+		if err != nil {
+			panic(err)
+		}
+
+		// no auth required, apparently
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			panic(err)
+		}
+		// defer resp.Body.Close()
+
+		err = json.Unmarshal(Must(io.ReadAll(resp.Body)), &x)
+		if err != nil {
+			panic(err)
+			// break
+		}
+		resp.Body.Close()
+
+		// note: these timings are not 100% fair since they include http get
+		// and Println
+		// sql trim 0.7 - 1.1 s
+		// go trim 0.7 - 1.1 s
+
+		for _, alb := range x.Releases {
+			insert(
+				tx,
+				"albums",
+				map[string]any{
+					// prefer go funcs over sql funcs since i want
+					// to avoid sql
+					"id":         alb.BasicInfo.Id,
+					"title":      strings.TrimSpace(alb.BasicInfo.Title),
+					"year":       alb.BasicInfo.Year,
+					"rating":     alb.Rating,
+					"date_added": Must(time.Parse(time.RFC3339, alb.DateAdded)).Unix(),
+				},
+			)
+
+			for _, a := range alb.BasicInfo.Artists {
+				insert(
+					tx,
+					"artists",
+					map[string]any{"id": a.Id, "name": a.Name},
+				)
+				insert(
+					tx,
+					"albums_artists",
+					map[string]any{"album_id": alb.BasicInfo.Id, "artist_id": a.Id},
+				)
+			}
+
+		}
+
+		if i == x.Pagination.Pages {
+			break
+		}
+
+		time.Sleep(time.Second)
+
+	}
+
+	err := tx.Commit()
+	if err != nil {
+		panic(err)
+	}
+
+	// // query := ` SELECT * FROM artists LIMIT 1; `
+	// query := ` SELECT * FROM artists; `
+	// var rows []struct {
+	// 	Id   int
+	// 	Name string
+	// 	// Title string
+	// 	// Year  int
+	// }
+	// err = s.db.Select(&rows, query)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// fmt.Println(len(rows))
 }
 
 type Row struct {
