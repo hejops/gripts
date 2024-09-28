@@ -32,6 +32,13 @@ const DBFile = "./collection.db"
 // first run may be slow, not sure why
 var s = sql{sqlx.MustConnect("sqlite3", DBFile)}
 
+//go:embed schema.sql
+var schema string
+
+func init() {
+	s.db.MustExec(schema)
+}
+
 func main() {
 	defer s.db.Close()
 
