@@ -223,7 +223,8 @@ func sys() string { // {{{
 func disk() string {
 	// df -h / /dev/sda?*
 	// exec.Command does not do shell expansion!
-	df := "df --human-readable --output=avail / /dev/sda?*"
+	// on some machines, / /dev/sdaX are the same
+	df := "df --human-readable --output=avail / /dev/sda?* | uniq"
 	out := getCmdOutput("sh", "-c", df)
 	var arr []string
 	for _, line := range strings.Split(out, "\n")[1:] {
