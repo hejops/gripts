@@ -11,10 +11,10 @@ FROM
         -- reason
         -- https://docs.sqlfluff.com/en/stable/reference/rules.html#column-references-should-be-qualified-consistently-in-single-table-statements
         SELECT
-            id,
-            title
+            albums.id,
+            albums.title
         FROM albums
-        WHERE rating >= 3
+        WHERE albums.rating >= 3
         -- AND id = 2691647
         ORDER BY random() LIMIT 1
     ) AS rand
