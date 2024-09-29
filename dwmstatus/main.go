@@ -259,11 +259,15 @@ func mail() string {
 		strings.Fields("count tag:inbox and tag:unread and date:today")...,
 	)
 	cmd.Env = os.Environ()
-	out, _ := execRawCommand(*cmd)
-	if out == "0" {
+	out, err := execRawCommand(*cmd)
+	switch {
+	case err != nil:
+		return "mail error"
+	case out == "0":
 		return ""
+	default:
+		return out + " new mail"
 	}
-	return out + " new mail"
 }
 
 // func updates() string {
