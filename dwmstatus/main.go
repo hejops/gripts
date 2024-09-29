@@ -5,17 +5,17 @@
 package main
 
 import (
-	// Goal: no 3rd party imports
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -34,8 +34,8 @@ const (
 
 var (
 	MachineName = readFile("/sys/devices/virtual/dmi/id/product_name")
-	Location    = getLocation()
 	MailCache   = Cacher{f: mail, value: mail()}
+	Location    *location
 )
 
 func die(err error) {
@@ -130,43 +130,126 @@ func filter(arr []string) []string { // {{{
 	return arr[:i] // return slice of remaining elements
 } // }}}
 
+type location struct {
+	City string
+	Lat  float32
+	Lon  float32
+}
+
 // Determine current location using a geolocation service. Should only be run
 // once, on startup.
 //
 // Returns empty string on encountering any error.
 //
-// Note: accuracy tends to be poor
-func getLocation() string { // {{{
+// Note: accuracy can be poor, depending on geolocation, and weather provider
+func getLocation() (*location, error) { // {{{
 	resp, err := http.Get("https://ipinfo.io")
 	if err != nil {
-		return ""
+		return nil, errors.New("geolocation failed")
 	}
 	defer resp.Body.Close()
-	var obj map[string]interface{}
 
-	if err := json.NewDecoder(resp.Body).Decode(&obj); err != nil {
-		return ""
+	// var obj map[string]interface{}
+	var obj struct {
+		City string
+		Loc  string
 	}
 
-	// https://go.dev/ref/spec#Type_assertions
-	return obj["city"].(string)
+	err = json.NewDecoder(resp.Body).Decode(&obj)
+	if err != nil {
+		return nil, errors.New("weather lookup failed")
+	}
+
+	latlon := strings.Split(obj.Loc, ",")
+	lat, _ := strconv.ParseFloat(latlon[0], 32)
+	lon, _ := strconv.ParseFloat(latlon[1], 32)
+
+	return &location{
+		City: obj.City,
+		Lat:  float32(lat),
+		Lon:  float32(lon),
+	}, nil
 } // }}}
 // Uses wttr.in for ease of parsing
-func weather(loc string) string { // {{{
+func weather() string { // {{{
 	// curl -sL ipinfo.io
 	// curl --max-time 1 --fail -sL "wttr.in/$location?format=%C,+%t+(%s)"
 
-	if loc == "" {
+	if Location == nil {
 		return ""
 	}
 
-	wt := getRespBody("https://wttr.in/" + url.QueryEscape(loc) + "?format=%C,+%t+(%s)")
-	if wt == "" {
-		log.Println("failed to get weather for", loc)
+	// wt := getRespBody(
+	// 	fmt.Sprintf(
+	// 		"https://wttr.in/%s?format=%%C,+%%t+(%%s)",
+	// 		url.QueryEscape(Location.City),
+	// 	),
+	// )
+
+	req, err := http.NewRequest(
+		"GET",
+		fmt.Sprintf(
+			"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=%d&lon=%d",
+			int(Location.Lat),
+			int(Location.Lat),
+		),
+		nil,
+	)
+	if err != nil {
+		panic(err)
 	}
-	if strings.Contains(wt, "Sorry") {
-		return ""
+	req.Header.Set("User-Agent", "github.com/hejops/dwmstatus")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		panic(err)
 	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+
+	// jq '[.properties | .timeseries[] | .data | .instant | .details | .air_temperature]'
+
+	var x struct {
+		Properties struct {
+			Timeseries []struct {
+				Data struct {
+					Instant struct {
+						Details struct{ Air_Temperature float32 }
+					}
+					Next_12_Hours struct {
+						Summary struct {
+							Symbol_Code string
+						}
+					}
+				}
+			}
+		}
+	}
+
+	err = json.Unmarshal(body, &x)
+	if err != nil {
+		panic(err)
+	}
+
+	minT := x.Properties.Timeseries[0].Data.Instant.Details.Air_Temperature
+	var maxT float32
+	for _, t := range x.Properties.Timeseries[:24] {
+		minT = min(t.Data.Instant.Details.Air_Temperature, minT)
+		maxT = max(t.Data.Instant.Details.Air_Temperature, maxT)
+	}
+
+	wt := fmt.Sprintf(
+		"%s, %.0f - %.0f°C",
+		strings.Split(x.Properties.Timeseries[0].Data.Next_12_Hours.Summary.Symbol_Code, "_")[0],
+		minT,
+		maxT,
+	)
+	fmt.Println(wt)
+
 	return wt
 } // }}}
 
@@ -208,7 +291,7 @@ func sys() string { // {{{
 
 	// top -b -n1 | grep %Cpu | awk '{print $2}'
 
-	var cpu string = "?"
+	cpu := "?"
 	cpu_out := getCmdOutputLazy("top -b -n1")
 	for _, line := range strings.Split(cpu_out, "\n") {
 		if strings.Contains(line, "%Cpu") {
@@ -294,9 +377,9 @@ func fastLoop() []string {
 
 // Reserved for making network requests with no action to be taken. Typically,
 // this includes weather, stocks, etc.
-func slowLoop(loc string) []string {
+func slowLoop() []string {
 	return []string{
-		weather(loc),
+		weather(),
 	}
 }
 
@@ -366,14 +449,21 @@ func checkRestart() {
 }
 
 func main() {
-	checkRestart()
+	l, err := getLocation()
+	if err == nil {
+		Location = l
+	}
+
+	weather()
+	return
+	// checkRestart()
 
 	// https://stackoverflow.com/a/40364927
 	fast := time.NewTicker(5 * time.Second)
 	slow := time.NewTicker(10 * time.Minute)
 
 	a := fastLoop()
-	b := slowLoop(Location)
+	b := slowLoop()
 
 	for {
 		select {
@@ -383,7 +473,7 @@ func main() {
 			MailCache.update()
 
 		case <-slow.C:
-			b = slowLoop(Location)
+			b = slowLoop()
 		}
 
 		// [slow] + [fast]
