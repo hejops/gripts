@@ -454,8 +454,6 @@ func main() {
 		Location = l
 	}
 
-	weather()
-	return
 	// checkRestart()
 
 	// https://stackoverflow.com/a/40364927
