@@ -16,20 +16,27 @@ func readline(prompt string) string {
 	return input
 }
 
-func getRetry(url string) *http.Response {
+// Warning: invalid urls (e.g. empty strings) will probably fail silently
+func getRetry(_url string) *http.Response {
+	// interval <> total time for 257 labels
+	// 60s -- 8m19
+	// 30s -- 7m24
+	// 15s -- 25m33 (panic)
+
 	i := 0
 	for {
-		resp, err := http.Get(url)
+		resp, err := http.Get(_url)
 		switch {
 		case i >= 100:
 			panic(err)
 		case err == nil && resp.StatusCode == 200:
 			return resp
-		case i%10 == 0:
-			fmt.Println("tried", i, url)
-			fallthrough
+		// case i > 0 && i%10 == 0:
+		// 	fmt.Println("tried", i, url)
+		// 	fallthrough
 		default:
-			time.Sleep(time.Minute)
+			// time.Sleep(time.Minute)
+			time.Sleep(time.Second * 30)
 			i++
 		}
 	}

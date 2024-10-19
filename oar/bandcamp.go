@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/cheggaaa/pb/v3"
 )
 
 const BC_DATE_FMT = "January 2, 2006"
@@ -29,15 +30,18 @@ type BandcampLabel struct {
 }
 
 type BandcampRelease struct {
+	Downloadable
 	Artist   string
 	Title    string
+	Url      string
 	Released time.Time // may be in the future
 	Age      int       // days
+	Label    string
 }
 
-func getBandcampLabels(username string) []BandcampLabel { // {{{
+func getBandcampLabels() []BandcampLabel { // {{{
 
-	url := "https://bandcamp.com/" + username
+	url := "https://bandcamp.com/" + Cfg.Bandcamp.Username
 	resp, err := http.Get(url)
 	if err != nil {
 		panic(err)
@@ -97,7 +101,7 @@ func getBandcampLabels(username string) []BandcampLabel { // {{{
 	return x.Followeers
 } // }}}
 
-func (l *BandcampLabel) getReleases(maxAge int) []BandcampRelease { // {{{
+func (l *BandcampLabel) getReleases() []BandcampRelease { // {{{
 	url := fmt.Sprintf("https://%s.bandcamp.com", l.UrlHints.Subdomain)
 	resp := getRetry(url + "/music")
 	defer resp.Body.Close()
@@ -128,11 +132,13 @@ func (l *BandcampLabel) getReleases(maxAge int) []BandcampRelease { // {{{
 
 	releases := []BandcampRelease{}
 	for _, albumUrl := range albumUrls {
-		r := extractRelease(albumUrl)
-		if r.Age < 0 {
-			panic("not impl")
+		// TODO: if albumUrl in db, can skip
+		r := newBandcampRelease(albumUrl)
+		// r := BandcampRelease{}.fromUrl(albumUrl) // seems un-idiomatic
+		if r.Age < 0 { // future
+			continue
 		}
-		if r.Age > maxAge {
+		if r.Age > Cfg.MaxDays {
 			break
 		}
 		releases = append(releases, r)
@@ -141,7 +147,12 @@ func (l *BandcampLabel) getReleases(maxAge int) []BandcampRelease { // {{{
 	return releases
 } // }}}
 
-func extractRelease(url string) BandcampRelease { // {{{
+// func (r BandcampRelease) fromUrl(url string) BandcampRelease {
+// 	return BandcampRelease{}
+// }
+
+// Parse the raw contents of bandcamp album HTML
+func newBandcampRelease(url string) BandcampRelease { // {{{
 	resp := getRetry(url)
 	defer resp.Body.Close()
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
@@ -153,6 +164,7 @@ func extractRelease(url string) BandcampRelease { // {{{
 	// if !strings.Contains(h, "tralbumData") {
 	// 	panic("not an album? " + url)
 	// }
+	// fmt.Println(h)
 
 	title, _ := doc.Find("title").First().Html()
 	fields := strings.Split(title, " | ")
@@ -175,31 +187,62 @@ func extractRelease(url string) BandcampRelease { // {{{
 	t, _ := time.Parse(BC_DATE_FMT, textDate)
 	days := time.Since(t).Hours() / 24
 
-	return BandcampRelease{
+	// TODO: write to db
+
+	rel := BandcampRelease{
 		Title:    fields[0],
-		Artist:   fields[1],
+		Url:      url,
 		Released: t,
 		Age:      int(days),
 	}
+
+	if len(fields) == 2 {
+		// v/a releases don't have artist
+		rel.Label = fields[1]
+	} else {
+		rel.Artist = fields[1]
+		rel.Label = fields[2]
+	}
+
+	return rel
 } // }}}
 
-func getBandcampWeek(username string) []BandcampRelease {
-	labels := getBandcampLabels(username)
+// Retrieve all bandcamp releases from the last 7 days. Slow due to
+// rate-limiting.
+func getBandcampReleases() []BandcampRelease {
+	labels := getBandcampLabels()
 	var wg sync.WaitGroup
 	releases := []BandcampRelease{}
-	for i, label := range labels {
+	// labelMap := make(map[BandcampLabel][]BandcampRelease)
+	// bar := pb.Full.Start(len(labels))
+
+	// single bar
+
+	// 8m15 / 261 labels
+
+	// counters = number of processed items
+	barTemplate := `{{string . "prefix"}} {{counters .}}/{{string . "total"}} {{etime .}}` // {{speed . "[%s/s]" ""}}`
+
+	bar := pb.Full.New(0).
+		Set("prefix", "bandcamp").
+		Set("total", len(labels)).
+		SetRefreshRate(time.Second).
+		SetTemplateString(barTemplate)
+	bar.Start()
+	for _, label := range labels {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r := label.getReleases(7)
+			r := label.getReleases()
+			bar.Increment()
 			if len(r) == 0 {
 				return
 			}
-			fmt.Println(i, label.Name, len(r))
 			releases = append(releases, r...)
+			// labelMap[label] = releases
 		}()
 	}
 	wg.Wait()
-	fmt.Printf("found %d releases from %d labels\n", len(releases), len(labels))
+	bar.Finish()
 	return releases
 }
