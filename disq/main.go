@@ -3,6 +3,10 @@
 package main
 
 import (
+	_ "embed"
+	"os"
+	"path/filepath"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
@@ -27,12 +31,32 @@ import (
 // type alias
 // type DBWrapper *sqlx.DB
 
-const DBFile = "./collection.db"
+// const DBFile = "./collection.db"
+const DBFile = "./collection2.db"
 
-// first run may be slow, not sure why
-var s = sql{sqlx.MustConnect("sqlite3", DBFile)}
+var s sql
+
+//go:embed schema.sql
+var schema string
+
+func init() {
+	// note: first db connection may be slow to build
+
+	// TODO: Once?
+	d, _ := os.Executable() // will be in /tmp for go run
+	s.db = sqlx.MustConnect(
+		"sqlite3",
+		filepath.Join(filepath.Dir(d), DBFile),
+	)
+}
+
+// TODO: https://fractaledmind.github.io/2023/09/07/enhancing-rails-sqlite-fine-tuning/#pragmas-summary
 
 func main() {
+	s.db.MustExec(schema)
+	dumpDB(os.Args[1])
+	return
+
 	defer s.db.Close()
 
 	lf, _ := tea.LogToFile("/tmp/didu.log", "didu")
