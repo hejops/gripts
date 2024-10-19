@@ -52,6 +52,13 @@ func init() {
 
 // TODO: https://fractaledmind.github.io/2023/09/07/enhancing-rails-sqlite-fine-tuning/#pragmas-summary
 
+//go:embed schema.sql
+var schema string
+
+func init() {
+	s.db.MustExec(schema)
+}
+
 func main() {
 	s.db.MustExec(schema)
 	dumpDB(os.Args[1])
