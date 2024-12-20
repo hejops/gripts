@@ -8,7 +8,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
+	"slices"
 	"sync"
 )
 
@@ -71,34 +73,93 @@ func parseFile(fname string) {
 		return
 	}
 
-	var assigns []*ast.AssignStmt
+	type GoStmt struct {
+		Params          []*ast.Field
+		Assigns         map[token.Pos]*ast.AssignStmt
+		RacyAssignLines []token.Pos
+	}
+
+	var goStmts []GoStmt
 
 	// https://blog.microfast.ch/refactoring-go-code-using-ast-replacement-e3cbacd7a331?gi=5b30ae55812a
 	maybeRacy := func(n ast.Node) bool {
 		if goStmt, ok := n.(*ast.GoStmt); ok {
-			if call, ok := goStmt.Call.Fun.(*ast.FuncLit); ok {
-				for _, stmt := range call.Body.List {
-					if assign, ok := stmt.(*ast.AssignStmt); ok {
-						// TODO: if lhs is slice[int], probably fine
-						if assign.Tok.String() == "=" {
-							assigns = append(assigns, assign)
-						}
+			var g GoStmt
+			g.Assigns = make(map[token.Pos]*ast.AssignStmt)
+			call := goStmt.Call.Fun.(*ast.FuncLit)
+			g.Params = call.Type.Params.List
+			for _, stmt := range call.Body.List {
+				if assign, ok := stmt.(*ast.AssignStmt); ok {
+					// := is probably fine
+					if assign.Tok.String() == "=" {
+						// g.Assigns = append(g.Assigns, assign)
+						g.Assigns[assign.TokPos] = assign
 					}
 				}
 			}
+			goStmts = append(goStmts, g)
+
 		}
 		return true
 	}
 
 	ast.Inspect(node, maybeRacy)
 
-	for _, a := range assigns {
-		line := fset.Position(a.TokPos).Line
-		fmt.Printf("%s:%v:%v = %v\n", fname, line, a.Lhs[0], a.Rhs[0])
+	for _, g := range goStmts {
+
+		var paramNames []string
+		for _, p := range g.Params {
+			paramNames = append(paramNames, p.Names[0].Name)
+		}
+
+		for _, a := range g.Assigns {
+			// TODO: if lhs is slice[int], probably fine
+
+			for _, rhs := range a.Rhs {
+				// rhs can be a simple Ident: foo = x
+				// or a CallExpr: foo = fn(x)
+				//
+				// in either case, if x was not passed directly
+				// via go func(...){...}(x), we assume that x
+				// is from the outer scope, and mark the whole
+				// goStmt as unsafe
+
+				switch rtype := rhs.(type) {
+				case *ast.Ident:
+					// fmt.Println("simple rhs:", r)
+					if !slices.Contains(paramNames, types.ExprString(rhs)) {
+						g.RacyAssignLines = append(g.RacyAssignLines, a.TokPos)
+					}
+				case *ast.CallExpr:
+					// need rtype to access Args
+					for _, arg := range rtype.Args {
+						if !slices.Contains(paramNames, types.ExprString(arg)) {
+							g.RacyAssignLines = append(g.RacyAssignLines, a.TokPos)
+						}
+					}
+				default:
+					panic("Unhandled rhs type in assignment")
+				}
+			}
+		}
+
+		if len(g.RacyAssignLines) > 0 {
+			fmt.Println("Racy assignment(s) found in goroutine:")
+			for _, a := range g.RacyAssignLines {
+				fmt.Printf(
+					"%s:%v:%v = %v\n",
+					fname,
+					fset.Position(a).Line,
+					g.Assigns[a].Lhs[0],
+					g.Assigns[a].Rhs[0],
+				)
+			}
+		}
+
 	}
 }
 
 func main() {
-	// parseFile("main.go")
-	racyFunc()
+	parseFile("main.go")
+	// racyFunc()
 }
