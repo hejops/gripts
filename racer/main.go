@@ -32,7 +32,11 @@ func racyFunc() {
 		go func(i int) {
 			defer wg.Done()
 			// concurrent write/read of outer var is bad!
-			// commenting this line alone will avoid the data race completely
+			// commenting this line alone will avoid the data race
+			// completely (i.e. go run -race main.go will pass)
+			//
+			// (a false positive will still be reported, but the
+			// code would already look bogus at that point)
 			foo.a = i
 
 			l1[i] = doStuff(foo) // result will be tainted by the concurrent write!
@@ -43,12 +47,12 @@ func racyFunc() {
 	fmt.Println(l1)
 	fmt.Println(l2)
 
-	var l3 []Foo
+	l3 := make([]Foo, 10)
 	for i := range 10 {
 		f := foo
 		f.a = i
 		f.b = i
-		l3 = append(l3, f)
+		l3[i] = f
 	}
 	for i, f := range l3 {
 		wg.Add(1)
@@ -59,6 +63,21 @@ func racyFunc() {
 	}
 	wg.Wait()
 	fmt.Println(l3)
+
+	// same as above, but written in a single loop
+	l4 := make([]Foo, 10)
+	for i := range 10 {
+		f := foo
+		f.a = i
+		f.b = i
+		wg.Add(1)
+		go func(f Foo) {
+			defer wg.Done()
+			l4[i] = doStuff(f)
+		}(f)
+	}
+	wg.Wait()
+	fmt.Println(l4)
 
 	//
 }
