@@ -93,9 +93,9 @@ func parseFile(fname string) {
 	}
 
 	type GoStmt struct {
-		Params          []*ast.Field
-		Assigns         map[token.Pos]*ast.AssignStmt
-		RacyAssignLines []token.Pos
+		Params      []*ast.Field
+		Assigns     map[token.Pos]*ast.AssignStmt
+		RacyAssigns []token.Pos
 	}
 
 	var goStmts []GoStmt
@@ -109,9 +109,8 @@ func parseFile(fname string) {
 			g.Params = call.Type.Params.List
 			for _, stmt := range call.Body.List {
 				if assign, ok := stmt.(*ast.AssignStmt); ok {
-					// := is probably fine
+					// := is probably fine, since it can only be used to initialise new vars
 					if assign.Tok.String() == "=" {
-						// g.Assigns = append(g.Assigns, assign)
 						g.Assigns[assign.TokPos] = assign
 					}
 				}
@@ -147,13 +146,13 @@ func parseFile(fname string) {
 				case *ast.Ident:
 					// https://stackoverflow.com/a/65433734
 					if !slices.Contains(paramNames, types.ExprString(rhs)) {
-						g.RacyAssignLines = append(g.RacyAssignLines, a.TokPos)
+						g.RacyAssigns = append(g.RacyAssigns, a.TokPos)
 					}
 				case *ast.CallExpr:
 					// need rtype to access Args
 					for _, arg := range rtype.Args {
 						if !slices.Contains(paramNames, types.ExprString(arg)) {
-							g.RacyAssignLines = append(g.RacyAssignLines, a.TokPos)
+							g.RacyAssigns = append(g.RacyAssigns, a.TokPos)
 						}
 					}
 				default:
@@ -162,15 +161,18 @@ func parseFile(fname string) {
 			}
 		}
 
-		if len(g.RacyAssignLines) > 0 {
+		if len(g.RacyAssigns) > 0 {
 			fmt.Println("Racy assignment(s) found in goroutine:")
-			for _, a := range g.RacyAssignLines {
+			// ast.Print(fset, g) // full ast
+			for _, a := range g.RacyAssigns {
+				// ast.FilterDecl(a, ast.Filter())
 				fmt.Printf(
-					"%s:%v:%v = %v\n",
+					"%s:%d:%v = %v\n",
+					// fset.Position(a).Filename, // will probably be ""
 					fname,
 					fset.Position(a).Line,
-					g.Assigns[a].Lhs[0],
-					g.Assigns[a].Rhs[0],
+					types.ExprString(g.Assigns[a].Lhs[0]),
+					types.ExprString(g.Assigns[a].Rhs[0]),
 				)
 			}
 		}
