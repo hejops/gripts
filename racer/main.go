@@ -18,8 +18,8 @@ func racyFunc() {
 		b int
 	}
 
-	foo := Foo{a: 1, b: 2}
-	doStuff := func(f Foo) Foo { return f }
+	foo := Foo{a: 99, b: 99}
+	doStuff := func(f Foo) Foo { f.a = f.a * 10; return f }
 
 	var wg sync.WaitGroup
 
@@ -29,28 +29,36 @@ func racyFunc() {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			foo.a = i            // concurrent mutation is bad!
-			l1[i] = doStuff(foo) // result will be tainted!
+			// concurrent write/read of outer var is bad!
+			// commenting this line alone will avoid the data race completely
+			foo.a = i
+
+			l1[i] = doStuff(foo) // result will be tainted by the concurrent write!
 			l2[i] = i            // safe; unaffected by mutation of foo
 		}(i)
 	}
+	wg.Wait()
+	fmt.Println(l1)
+	fmt.Println(l2)
 
-	var foos []Foo
+	var l3 []Foo
 	for i := range 10 {
 		f := foo
 		f.a = i
 		f.b = i
-		foos = append(foos, f)
+		l3 = append(l3, f)
 	}
-	for i, f := range foos {
+	for i, f := range l3 {
 		wg.Add(1)
 		go func(f Foo) {
 			defer wg.Done()
-			foos[i] = doStuff(foo) // safe
+			l3[i] = doStuff(f) // safe, because f is different in every iteration
 		}(f)
 	}
-
 	wg.Wait()
+	fmt.Println(l3)
+
+	//
 }
 
 func parseFile(fname string) {
@@ -91,5 +99,6 @@ func parseFile(fname string) {
 }
 
 func main() {
-	parseFile("main.go")
+	// parseFile("main.go")
+	racyFunc()
 }
