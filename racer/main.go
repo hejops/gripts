@@ -121,12 +121,12 @@ func parseFile(fname string) {
 				//
 				// in either case, if x was not passed directly
 				// via go func(...){...}(x), we assume that x
-				// is from the outer scope, and mark the whole
-				// goStmt as unsafe
+				// came from the outer scope, and mark the
+				// whole goStmt as unsafe
 
 				switch rtype := rhs.(type) {
 				case *ast.Ident:
-					// fmt.Println("simple rhs:", r)
+					// https://stackoverflow.com/a/65433734
 					if !slices.Contains(paramNames, types.ExprString(rhs)) {
 						g.RacyAssignLines = append(g.RacyAssignLines, a.TokPos)
 					}
