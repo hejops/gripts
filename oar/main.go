@@ -1,3 +1,5 @@
+// RSS downloader
+
 package main
 
 import (
@@ -8,64 +10,85 @@ import (
 	"github.com/cheggaaa/pb/v3"
 )
 
-const MaxConcurrent = 10
+const (
+	MaxConcurrent = 8 // youtube-only
 
-func main() {
-	// exIo()
-	// // Example_multiple()
-	// return
+	Spinner = `{{ cycle . "⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏" }}`
+	// https://github.com/hetznercloud/cli/blob/b59cfbfdb338bad3a7b80c0569248a8e3abaad01/internal/ui/progress_terminal.go#L34
 
-	config := LoadConfig()
-	// getBandcampWeek(config.Bandcamp.Username)
-
-	videos := getYoutubeWeek(config.Youtube.Urls)
-	fmt.Println(len(videos))
-
-	// 2 videos downloaded (+1 ignored) = 350 MB:
-	// 49 s (go)
-	// 70 s (nogo)
-	//
-	// 855 MB / 5 = 2m22
-	// 855 MB / 10 = 1m57
-
+	BarTemplate = `{{string . "prefix"}} {{counters .}} {{bar .}} {{rtime .}} {{speed . "[%s/s]" ""}}`
 	// https://github.com/cheggaaa/pb/blob/master/v3/element.go#L36
 	// for i/o, counters = total size
-	tmpl := `{{string . "prefix" }} {{counters . }} {{speed . "[%s/s]" "[...]" }}`
 
-	bars := []*pb.ProgressBar{}
-	for _, v := range videos[:5] {
-		bar := pb.Full.New(0)
-		bar.Set("prefix", v.Url)
-		bar.SetRefreshRate(time.Millisecond * 500)
-		bar.SetTemplateString(tmpl)
-		// TODO: change style when done
-		bars = append(bars, bar)
+	SpinnerTemplate = `{{string . "prefix"}} ` + Spinner
+)
+
+func main() {
+	LoadConfig()
+
+	for i, r := range getBandcampReleases() {
+		// concurrent downloads are avoided because rate-limiting would
+		// be almost guaranteed
+		_ = r.Download(nil)
+		fmt.Println("ok:", i, r.Url)
 	}
+	// return
 
-	pool, err := pb.StartPool(bars...)
+	videos := getYoutubeVideos()[:20]
+
+	pool, err := pb.StartPool()
 	if err != nil {
 		panic(err)
 	}
-	// not supposed to call pool.Start(), apparently
 
 	var wg sync.WaitGroup
-	for i, v := range videos[:5] {
+	var errs int
+
+	for i, v := range videos {
 		wg.Add(1)
 
-		go func(b *pb.ProgressBar) {
+		go func() {
 			defer wg.Done()
-			b.Start()
-			v.download(b)
-			b.Finish()
-		}(bars[i])
 
-		// limit to 5 concurrent downloads
+			// bars should only be added when needed (otherwise all
+			// bars will be rendered immediately)
+			b := pb.Full.New(0).
+				Set("prefix", v.Url).
+				SetRefreshRate(time.Second).
+				// SetTemplateString(BarTemplate)
+				SetTemplateString(SpinnerTemplate)
+			pool.Add(b)
+
+			b.Start()
+			if err := v.Download(b); err != nil {
+				b.SetCurrent(int64(100))
+				b.SetTemplateString(`{{string . "prefix" }} ` + err.Error())
+				// b.SetTemplateString("\r")
+				b.Finish()
+				errs++
+				return
+			}
+			// change style when done
+			b.SetCurrent(int64(100))
+			b.SetTemplateString(`{{string . "prefix" }} done`)
+			// b.SetTemplateString("\r")
+			// b.SetTemplateString("") // clear line
+			b.Finish()
+			// wg.Done() // blocks eternally!
+		}()
+
+		// limit concurrent downloads
 		if (i+1)%MaxConcurrent == 0 {
 			wg.Wait()
 		}
+
 	}
 	wg.Wait()
 	if err := pool.Stop(); err != nil {
 		panic(err)
 	}
+
+	fmt.Println(errs, "errors")
+
+	// browseFiles(Cfg.Dest)
 }

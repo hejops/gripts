@@ -1,6 +1,11 @@
+// Statusbar for `dwm`
+//
 // A rewrite of a 3+ year-old Bash script. I could never be bothered to
 // properly implement 2 loops with different intervals in Bash, but Go makes
 // this trivial.
+//
+// Until I find native Go equivalents, the following executables are required:
+//	df, free, iwgetid, top, sensors, playerctl
 
 package main
 
@@ -24,7 +29,7 @@ const (
 	// Divides sections in the status bar
 	Separator = " | "
 
-	// e.g. Mon 26/08 12:44
+	// e.g. Mon 26/08 13:44
 	TimeFmt = "Mon 02/01 15:04"
 	// [Z07]"
 
@@ -33,10 +38,28 @@ const (
 )
 
 var (
+	fastInterval = 5 * time.Second
+	slowInterval = 10 * time.Minute
+
+	lastBytes = netBytes()
+
 	MachineName = readFile("/sys/devices/virtual/dmi/id/product_name")
-	MailCache   = Cacher{f: mail, value: mail()}
-	Location    *location
+	MailCache   = Cacher{
+		f:        mail,
+		value:    mail(),
+		interval: int(slowInterval.Seconds() / fastInterval.Seconds()),
+	}
+	Location *location
 )
+
+type Cacher struct {
+	f        func() string
+	value    string
+	count    int
+	interval int
+
+	// interval := 120 // 10 min / 5 s
+}
 
 func die(err error) {
 	lf, _ := os.OpenFile("/tmp/dwmstatus", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
@@ -60,7 +83,7 @@ func execRawCommand(cmd exec.Cmd) (string, error) { // {{{
 	return strings.TrimSpace(string(bytes)), nil
 } // }}}
 
-// if any arg contains a space
+// should be used if any arg contains a space that must be preserved
 func getCmdOutput(cmd string, args ...string) string { // {{{
 	out, _ := execRawCommand(*exec.Command(cmd, args...))
 	return out
@@ -73,14 +96,14 @@ func getCmdOutputLazy(cmd string) string { // {{{
 	return out
 } // }}}
 
-func getCmdOutputWithFallback(cmd string, fallback string) string { // {{{
-	args := strings.Fields(cmd)
-	out, err := execRawCommand(*exec.Command(args[0], args[1:]...))
-	if err != nil {
-		return fallback
-	}
-	return out
-} // }}}
+// func getCmdOutputWithFallback(cmd string, fallback string) string { // {{{
+// 	args := strings.Fields(cmd)
+// 	out, err := execRawCommand(*exec.Command(args[0], args[1:]...))
+// 	if err != nil {
+// 		return fallback
+// 	}
+// 	return out
+// } // }}}
 
 func readFile(path string) string { // {{{
 	f, err := os.Open(path)
@@ -266,14 +289,16 @@ func _time() string {
 }
 
 func sys() string { // {{{
-	// free -h | awk 'NR==2 {print $3}' | tr -d i
 
-	mem := getCmdOutputLazy("free -Lh")
+	// SwapUse          0B CachUse        6.9G  MemUse        6.8G MemFree        2.8G
+	mem := getCmdOutputLazy("free --line --human --si")
 	mem = strings.Fields(mem)[5]
-	mem = strings.TrimRight(mem, "i")
+	// TODO: warn if >= 8 G
 
 	// sensors -u | grep temp1_input | sort | tail -n1 | cut -d' ' -f4 | cut -d. -f1
 
+	// parsing the json (sensors -j) is not trivial, due to inconsistent
+	// field names
 	sensors := getCmdOutputLazy("sensors -u")
 	var max_temp string
 	for _, line := range strings.Split(sensors, "\n") {
@@ -288,10 +313,13 @@ func sys() string { // {{{
 	max_temp, _, _ = strings.Cut(max_temp, ".")
 	// fmt.Println(max_temp)
 
-	// top -b -n1 | grep %Cpu | awk '{print $2}'
+	// %Cpu(s):  5.8 us,  1.7 sy,  0.0 ni, 92.5 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
 
+	// 3rd line, but the intent is clearer this way (and performance is
+	// essentially identical, despite the 3 extra strings.Contains calls)
 	cpu := "?"
-	cpu_out := getCmdOutputLazy("top -b -n1")
+	// pid 8 is arbitrary; we just get the summary and ignore the processes
+	cpu_out := getCmdOutputLazy("top --batch --iterations=1 --pid=8")
 	for _, line := range strings.Split(cpu_out, "\n") {
 		if strings.Contains(line, "%Cpu") {
 			cpu = strings.Fields(line)[1]
@@ -361,11 +389,29 @@ func mail() string {
 // 	return strconv.Itoa(lines(string(bytes))) + " updates"
 // }
 
+func network() string {
+	// name := getCmdOutputWithFallback("iwgetid -r", "No network")
+
+	name, err := execRawCommand(*exec.Command("iwgetid", "-r"))
+	if err != nil {
+		return "No network"
+	}
+
+	nowBytes := netBytes()
+	diff := nowBytes - lastBytes
+	kbps := diff / int(fastInterval.Seconds()) / 1024
+
+	lastBytes = nowBytes
+
+	return fmt.Sprintf("%s [%d kb/s]", name, kbps)
+}
+
 func fastLoop() []string {
 	return []string{
 		// potentially fallible
 		nowplaying(),
-		getCmdOutputWithFallback("iwgetid -r", "No network"),
+		// getCmdOutputWithFallback("iwgetid -r", "No network"),
+		network(),
 		// the following cmds should all be infallible
 		sys(),
 		disk(),
@@ -382,26 +428,16 @@ func slowLoop() []string {
 	}
 }
 
-type Cacher struct {
-	f     func() string
-	value string
-	count int
-}
-
-// Caches are checked slowly when empty, but quickly when non-empty (so that we
-// can "clear" the notif)
-func (cache *Cacher) update() { // https://gobyexample.com/methods
-
-	// TODO: we should have a time.Duration struct field
-	interval := 120 // 10 min / 5 s
-
-	if cache.value != "" {
-		cache.value = cache.f()
-	} else if cache.count > interval {
-		cache.value = cache.f()
-		cache.count = 0
+// Caches are checked slowly (every 10 min) when empty, but quickly (every 5 s)
+// when non-empty, so that we can "clear" the notif
+func (c *Cacher) update() { // https://gobyexample.com/methods
+	if c.value != "" {
+		c.value = c.f()
+	} else if c.count > c.interval {
+		c.value = c.f()
+		c.count = 0
 	} else {
-		cache.count += 1
+		c.count += 1
 	}
 	// fmt.Println(cache.count, cache.value)
 }
@@ -421,9 +457,9 @@ func checkRestart() {
 		if d.IsDir() || filepath.Base(path) != "stat" {
 			return nil
 		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			panic(err)
+		b, e := os.ReadFile(path)
+		if e != nil {
+			panic(e)
 		}
 
 		s := string(b)
@@ -435,6 +471,11 @@ func checkRestart() {
 		}
 
 		pid := strings.Fields(s)[0]
+		// TODO: avoid killing our own process
+		if p, _ := strconv.Atoi(pid); p == os.Getpid() {
+			return nil
+		}
+		fmt.Println(s, s[start+1:end], pid, os.Getpid())
 		if err := exec.Command("kill", pid).Run(); err != nil {
 			panic(err)
 		}
@@ -447,29 +488,43 @@ func checkRestart() {
 	}
 }
 
+func netBytes() int {
+	b, err := exec.Command("ip", "-j", "-s", "link").Output()
+	if err != nil {
+		panic(err)
+	}
+	var x []struct {
+		Stats64 struct{ Rx struct{ Bytes int } }
+	}
+	if err := json.Unmarshal(b, &x); err != nil {
+		panic(err)
+	}
+	return x[2].Stats64.Rx.Bytes
+}
+
 func main() {
+	// checkRestart()
+	// fmt.Println(2)
 	l, err := getLocation()
 	if err == nil {
 		Location = l
 	}
 
-	// checkRestart()
-
 	// https://stackoverflow.com/a/40364927
-	fast := time.NewTicker(5 * time.Second)
-	slow := time.NewTicker(10 * time.Minute)
+	fastTick := time.NewTicker(fastInterval)
+	slowTick := time.NewTicker(slowInterval)
 
 	a := fastLoop()
 	b := slowLoop()
 
 	for {
 		select {
-		case <-fast.C:
+		case <-fastTick.C:
 			a = fastLoop()
 
 			MailCache.update()
 
-		case <-slow.C:
+		case <-slowTick.C:
 			b = slowLoop()
 		}
 
