@@ -3,6 +3,9 @@
 package main
 
 import (
+	_ "embed"
+	"fmt"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
@@ -41,6 +44,27 @@ func init() {
 
 func main() {
 	defer s.db.Close()
+	// dumpDB("")
+	row := struct {
+		Album  string
+		Artist string
+	}{}
+	err := s.db.QueryRowx(
+		`
+		SELECT title as album, name as artist FROM
+		(select id, title from albums where rating>=3 order by random() limit 1) as x
+		JOIN albums_artists
+		ON x.id = albums_artists.album_id
+		JOIN artists
+		ON artists.id = albums_artists.artist_id
+		;
+		`,
+	).StructScan(&row)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(row.Artist, row.Album)
+	return
 
 	lf, _ := tea.LogToFile("/tmp/didu.log", "didu")
 	defer lf.Close()
