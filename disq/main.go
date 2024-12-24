@@ -44,29 +44,22 @@ func init() {
 	// note: first db connection may be slow to build
 
 	// TODO: Once?
-	d, _ := os.Executable() // will be in /tmp for go run
+	d, _ := os.Executable()
 	s.db = sqlx.MustConnect(
 		"sqlite3",
+		// will be in /tmp for go run
 		filepath.Join(filepath.Dir(d), DBFile),
 	)
+	s.db.MustExec(schema)
 }
 
 // TODO: https://fractaledmind.github.io/2023/09/07/enhancing-rails-sqlite-fine-tuning/#pragmas-summary
 
-//go:embed schema.sql
-var schema string
-
-func init() {
-	s.db.MustExec(schema)
-}
-
 func main() {
-	s.db.MustExec(schema)
 	dumpDB(os.Args[1])
 	return
 
 	defer s.db.Close()
-	// dumpDB("")
 	row := struct {
 		Album  string
 		Artist string
