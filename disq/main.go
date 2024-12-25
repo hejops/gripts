@@ -11,13 +11,8 @@
 package main
 
 import (
-	_ "embed"
 	"fmt"
 	"os"
-	"path/filepath"
-
-	"github.com/jmoiron/sqlx"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 // an exercise to work with data via:
@@ -36,36 +31,12 @@ import (
 
 // TODO: integrate with youtube, mpv
 
-var s sql
-
-func init() {
-	// note: first db connection may be slow to build. this may not be an
-	// issue with clickhouse?
-
-	// try cwd first (go run), then fallback to wherever the binary is
-	// ('prod')
-
-	const DBFile = "./collection2.db"
-
-	var db_path string
-	if _, err := os.Stat(DBFile); err == nil {
-		cwd, _ := os.Getwd()
-		db_path = filepath.Join(cwd, DBFile)
-	} else {
-		bin, _ := os.Executable() // binary will be in /tmp for go run
-		db_path = filepath.Join(filepath.Dir(bin), DBFile)
-	}
-
-	s.db = sqlx.MustConnect("sqlite3", db_path)
-	s.db.MustExec(_schema)
-}
-
 // TODO: https://fractaledmind.github.io/2023/09/07/enhancing-rails-sqlite-fine-tuning/#pragmas-summary
 
 func main() {
 	defer s.db.Close()
 
-	// dumpDB(os.Args[1])
+	dumpDB(os.Args[1])
 	fmt.Println(s.RandomAlbum())
 	fmt.Println(s.RandomAlbumFromArtist("Metallica"))
 	ch_main()

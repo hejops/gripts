@@ -2,14 +2,20 @@ package main
 
 import (
 	_ "embed"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // TODO: this looks interesting, but requires files that are invalid sql https://github.com/Davmuz/gqt
 
 var (
+	s sqlite
+
 	// The schema requires many double inner joins.
 	//go:embed queries/schema.sql
 	_schema string
@@ -21,7 +27,7 @@ var (
 
 // Wrapper over *sqlx.DB
 type (
-	sql struct {
+	sqlite struct {
 		// *sqlx.DB // can use db.Close() (etc) directly, but compiler complains
 
 		db *sqlx.DB // the inner DB, with all the typical methods
@@ -70,25 +76,82 @@ type (
 	}
 )
 
-// wrapper over sqlx.NamedExec. maybe gorm is easier, but i will hold off for now
-func insert(
+func init() {
+	// note: first db connection may be slow to build. this may not be an
+	// issue with clickhouse?
+
+	// try cwd first (go run), then fallback to wherever the binary is
+	// ('prod')
+
+	const DBFile = "./collection2.db"
+
+	var db_path string
+	if _, err := os.Stat(DBFile); err == nil {
+		cwd, _ := os.Getwd()
+		db_path = filepath.Join(cwd, DBFile)
+	} else {
+		bin, _ := os.Executable() // binary will be in /tmp for go run
+		db_path = filepath.Join(filepath.Dir(bin), DBFile)
+	}
+
+	s.db = sqlx.MustConnect("sqlite3", db_path)
+	s.db.MustExec(_schema)
+}
+
+func (s *sqlite) InsertAlbum(tx *sqlx.Tx, alb Release) {
+	s.insert(
+		tx,
+		"albums",
+		map[string]any{
+			// go funcs should be used over sql funcs, so that dbs
+			// can be more easily swapped out
+			"id":         alb.BasicInfo.Id,
+			"title":      strings.TrimSpace(alb.BasicInfo.Title),
+			"year":       alb.BasicInfo.Year,
+			"rating":     alb.Rating,
+			"date_added": Must(time.Parse(time.RFC3339, alb.DateAdded)).Unix(),
+		},
+	)
+
+	for _, a := range alb.BasicInfo.Artists {
+		s.insert(
+			tx,
+			"artists",
+			map[string]any{"id": a.Id, "name": a.Name},
+		)
+		s.insert(
+			tx,
+			"albums_artists",
+			map[string]any{"album_id": alb.BasicInfo.Id, "artist_id": a.Id},
+		)
+	}
+}
+
+// wrapper over sqlx.NamedExec (which guards against sql injection). maybe gorm
+// is easier, but i will hold off for now
+func (s *sqlite) insert(
 	tx *sqlx.Tx,
 	table string,
 	m map[string]any,
 ) {
+	// https://jmoiron.github.io/sqlx/#namedParams
+	// INSERT OR IGNORE INTO albums
+	//         (title,year,rating,date_added,id)
+	// VALUES
+	//         (:title,:year,:rating,:date_added,:id)
+
 	keys := Keys(m)
 	var ckeys []string
 	for _, k := range keys {
 		ckeys = append(ckeys, ":"+k)
 	}
-	_, err := tx.NamedExec(
-		`INSERT OR IGNORE INTO `+table+`
-			(`+strings.Join(keys, ",")+`)
-			VALUES
-			(`+strings.Join(ckeys, ",")+`)
-			`,
-		m,
-	)
+	query := `
+	INSERT OR IGNORE INTO ` + table + `
+		(` + strings.Join(keys, ",") + `)
+	VALUES
+		(` + strings.Join(ckeys, ",") + `)
+	`
+	_, err := tx.NamedExec(query, m)
 	if err != nil {
 		panic(err)
 	}
@@ -102,7 +165,7 @@ func insert(
 // func (s *sql)query[T any]( query string, _ []T) []T {}
 
 func query[T any](
-	s *sql,
+	s *sqlite,
 	_ []T,
 	query string,
 	args ...any, // not ...string!
@@ -145,8 +208,8 @@ func query[T any](
 } // }}}
 
 // RandomAlbum selects a random album with rating >= 3
-func (s *sql) RandomAlbum() []SimpleRow { return query(s, []SimpleRow{}, _select_random) }
+func (s *sqlite) RandomAlbum() []SimpleRow { return query(s, []SimpleRow{}, _select_random) }
 
-func (s *sql) RandomAlbumFromArtist(artist string) []string {
+func (s *sqlite) RandomAlbumFromArtist(artist string) []string {
 	return query(s, []string{}, _select_random_from_artist, artist)
 }
