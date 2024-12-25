@@ -1,4 +1,12 @@
-// TUI for Discogs collection
+// Browse a Discogs collection.
+//
+// The MVP dumps a user's collection and makes a query to select a random
+// album. This fits my primary use case of "I'm away from my local media
+// storage and want to listen to something I previously liked". This has
+// already been implemented, albeit in a hacky mix of go, jq and bash.
+//
+// A more sophisticated program would enable interactive browsing and filtering
+// of the collection, abstracting away complex logic with sql queries.
 
 package main
 
@@ -8,13 +16,12 @@ import (
 	"os"
 	"path/filepath"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 // an exercise to work with data via:
-// 1. raw SQL (db -> sqlx)
+// 1. raw SQL (db -> sqlx/clickhouse)
 // 2. SQL-ish (csv? -> go-duckdb) -- unusable!
 // 3. PRQL (csv -> duckdb-prql) -- this would just rely on go-duckdb, so no
 // 4. ORM (db -> gorm)
@@ -29,67 +36,46 @@ import (
 
 // TODO: integrate with youtube, mpv
 
-// type alias
-// type DBWrapper *sqlx.DB
-
-// const DBFile = "./collection.db"
-const DBFile = "./collection2.db"
-
 var s sql
 
-//go:embed schema.sql
-var schema string
-
 func init() {
-	// note: first db connection may be slow to build
+	// note: first db connection may be slow to build. this may not be an
+	// issue with clickhouse?
 
-	// TODO: Once?
-	d, _ := os.Executable()
-	s.db = sqlx.MustConnect(
-		"sqlite3",
-		// will be in /tmp for go run
-		filepath.Join(filepath.Dir(d), DBFile),
-	)
-	s.db.MustExec(schema)
+	// try cwd first (go run), then fallback to wherever the binary is
+	// ('prod')
+
+	const DBFile = "./collection2.db"
+
+	var db_path string
+	if _, err := os.Stat(DBFile); err == nil {
+		cwd, _ := os.Getwd()
+		db_path = filepath.Join(cwd, DBFile)
+	} else {
+		bin, _ := os.Executable() // binary will be in /tmp for go run
+		db_path = filepath.Join(filepath.Dir(bin), DBFile)
+	}
+
+	s.db = sqlx.MustConnect("sqlite3", db_path)
+	s.db.MustExec(_schema)
 }
 
 // TODO: https://fractaledmind.github.io/2023/09/07/enhancing-rails-sqlite-fine-tuning/#pragmas-summary
 
 func main() {
-	dumpDB(os.Args[1])
-	return
+	// dumpDB(os.Args[1])
+	// return
 
 	defer s.db.Close()
-	row := struct {
-		Album  string
-		Artist string
-	}{}
-	err := s.db.QueryRowx(
-		`
-		SELECT title as album, name as artist FROM
-		(select id, title from albums where rating>=3 order by random() limit 1) as x
-		JOIN albums_artists
-		ON x.id = albums_artists.album_id
-		JOIN artists
-		ON artists.id = albums_artists.artist_id
-		;
-		`,
-	).StructScan(&row)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(row.Artist, row.Album)
-	return
 
-	lf, _ := tea.LogToFile("/tmp/didu.log", "didu")
-	defer lf.Close()
+	fmt.Println(s.RandomAlbum())
+	fmt.Println(s.RandomAlbumFromArtist("Metallica"))
 
-	m := model{table: sqlToTable(`SELECT * FROM collection`)}
-
-	// all filtering shall be done via sql
-	if _, err := tea.NewProgram(&m).Run(); err != nil {
-		panic(err)
-	}
+	// m := model{table: sqlToTable(`SELECT * FROM collection`)}
+	// // all filtering shall be done via sql
+	// if _, err := tea.NewProgram(&m).Run(); err != nil {
+	// 	panic(err)
+	// }
 
 	// s.aggArtistRating()
 	// // TODO: https://github.com/rodaine/table?tab=readme-ov-file#usage
