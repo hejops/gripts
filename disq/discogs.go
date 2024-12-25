@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -35,23 +36,17 @@ type (
 	}
 )
 
+// No authentication is required.
 func dumpDB(user string) { // {{{
-	// https://github.com/jmoiron/sqlx?tab=readme-ov-file#usage
-
 	u, _ := url.Parse(ApiPrefix)
-
 	path := fmt.Sprintf("/users/%s/collection/folders/0/releases", user)
 	u = u.JoinPath(path) // note: url.JoinPath can error, but URL.JoinPath does not
 
 	v := url.Values{}
 	v.Set("per_page", "250")
 
-	var x struct {
-		Pagination struct{ Pages int }
-		Releases   []Release
-	}
-
-	for pg := 1; ; pg++ {
+	max_pg := math.MaxInt16
+	for pg := 1; pg <= max_pg; pg++ {
 		v.Set("page", strconv.Itoa(pg))
 		u.RawQuery = v.Encode()
 
@@ -60,28 +55,27 @@ func dumpDB(user string) { // {{{
 			panic(err)
 		}
 
-		// no auth required, apparently
-
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			panic(err)
 		}
-		// defer resp.Body.Close()
 
-		err = json.Unmarshal(Must(io.ReadAll(resp.Body)), &x)
-		if err != nil {
+		var x struct {
+			Pagination struct{ Pages int }
+			Releases   []Release
+		}
+		if err = json.Unmarshal(Must(io.ReadAll(resp.Body)), &x); err != nil {
 			panic(err)
 		}
 		resp.Body.Close()
 
-		if pg > x.Pagination.Pages {
-			break
+		// on hitting rate limit, discogs returns a valid null-ish
+		// resp, which is actually an error
+		if x.Pagination.Pages == 0 {
+			panic("hit rate limit")
+			// pg--
 		}
-
-		// note: these timings are not 100% fair since they include http get
-		// and Println
-		// sql trim 0.7 - 1.1 s
-		// go trim 0.7 - 1.1 s
+		max_pg = x.Pagination.Pages
 
 		tx := s.db.MustBegin()
 		batch, err := ch.db.PrepareBatch(context.Background(), "INSERT INTO albums")
@@ -101,8 +95,8 @@ func dumpDB(user string) { // {{{
 			panic(err)
 		}
 
-		fmt.Println(pg, "ok")
-		time.Sleep(time.Second)
+		fmt.Printf("%d/%d ok\n", pg, x.Pagination.Pages)
+		time.Sleep(2 * time.Second)
 
 	}
 } // }}}
