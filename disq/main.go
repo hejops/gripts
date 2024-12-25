@@ -31,15 +31,15 @@ import (
 
 // TODO: integrate with youtube, mpv
 
-// TODO: https://fractaledmind.github.io/2023/09/07/enhancing-rails-sqlite-fine-tuning/#pragmas-summary
-
 func main() {
 	defer s.db.Close()
 
-	dumpDB(os.Args[1])
+	if len(os.Args) > 1 {
+		dumpDB(os.Args[1])
+	}
 	fmt.Println(s.RandomAlbum())
 	fmt.Println(s.RandomAlbumFromArtist("Metallica"))
-	ch_main()
+	ch_test()
 
 	// m := model{table: sqlToTable(`SELECT * FROM collection`)}
 	// // all filtering shall be done via sql

@@ -3,66 +3,21 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-func ch_main() {
-	conn, err := connect()
-	if err != nil {
-		panic((err))
-	}
+var ch _clickhouse
 
-	ctx := context.Background()
-
-	schema := `
-CREATE TABLE IF NOT EXISTS person (
-    first_name String,
-    last_name String,
-    email String,
-    age UInt32
+type (
+	_clickhouse struct{ db driver.Conn }
 )
-ENGINE = ReplacingMergeTree
-PRIMARY KEY (email)
-`
 
-	if err := conn.Exec(ctx, schema); err != nil {
-		panic(err)
-	}
+func init() { // {{{
+	// https://clickhouse.com/docs/en/integrations/go#copy-in-some-sample-code
 
-	if err := conn.Exec(
-		ctx,
-		`
-		INSERT INTO person (first_name, last_name, email, age) 
-		-- clickhouse supports both question mark and $n placeholders
-		VALUES (?,?,?,?);
-		`,
-		"Jason",
-		"Moiron",
-		"jmoiron@jmoiron.net",
-		1,
-	); err != nil {
-		panic(err)
-	}
-
-	// https://clickhouse.com/docs/en/integrations/go#using-structs
-	// all tags must be specified, apparently? column name -> struct field
-	// inference doesn't seem to work
-
-	var people []struct {
-		FirstName string `ch:"first_name"`
-		LastName  string `ch:"last_name"`
-		Email     string `ch:"email"`
-		Age       uint32 `ch:"age"`
-	}
-	if err := conn.Select(ctx, &people, "SELECT * FROM person FINAL"); err != nil {
-		panic(err)
-	}
-	fmt.Println(people)
-}
-
-func connect() (driver.Conn, error) {
 	var (
 		ctx       = context.Background()
 		conn, err = clickhouse.Open(&clickhouse.Options{
@@ -90,7 +45,7 @@ func connect() (driver.Conn, error) {
 	)
 
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
 
 	if err := conn.Ping(ctx); err != nil {
@@ -102,7 +57,94 @@ func connect() (driver.Conn, error) {
 				exception.StackTrace,
 			)
 		}
-		return nil, err
+		panic(err)
 	}
-	return conn, nil
+
+	ch.db = conn
+
+	// Select columns which align with your common filters. If a column is
+	// used frequently in WHERE clauses, prioritize including these in your
+	// key over those which are used less frequently. Prefer columns which
+	// help exclude a large percentage of the total rows when filtered,
+	// thus reducing the amount of data which needs to be read.
+	//
+	// Prefer columns which are likely to be highly correlated with other
+	// columns in the table. This will help ensure these values are also
+	// stored contiguously, improving compression. GROUP BY and ORDER BY
+	// operations for columns in the ordering key can be made more memory
+	// efficient.
+	//
+	// https://clickhouse.com/docs/en/data-modeling/schema-design#choosing-an-ordering-key
+
+	// clickhouse does not support foreign keys at all. it also discourages
+	// normalised tables and joins
+	//
+	// https://clickhouse.com/docs/en/migrations/bigquery#primary-and-foreign-keys-and-primary-index
+
+	_ = ch.db.Exec(ctx, "DROP TABLE IF EXISTS albums")
+
+	schema := `
+CREATE TABLE IF NOT EXISTS albums (
+    album_id UInt32 NOT NULL,
+    artist_id UInt32 NOT NULL,
+    artist_name String NOT NULL,
+    title String NOT NULL,
+    date_added DateTime NOT NULL,
+    year UInt32,
+    rating UInt8, -- 0 to 5
+)
+
+-- https://clickhouse.com/docs/en/guides/developer/deduplication#using-replacingmergetree-for-upserts
+ENGINE = ReplacingMergeTree
+
+PRIMARY KEY (artist_name, rating, album_id)
+`
+
+	if err := ch.db.Exec(ctx, schema); err != nil {
+		panic(err)
+	}
+} // }}}
+
+func ch_test() { // {{{
+	// https://clickhouse.com/docs/en/integrations/go#using-structs
+	// all tags must be specified, apparently? column name -> struct field
+	// inference doesn't seem to work
+
+	var people []struct {
+		FirstName string `ch:"first_name"`
+		LastName  string `ch:"last_name"`
+		Email     string `ch:"email"`
+		Age       uint32 `ch:"age"`
+	}
+	if err := ch.db.Select(
+		context.Background(),
+		&people,
+		"SELECT * FROM person FINAL",
+	); err != nil {
+		panic(err)
+	}
+	fmt.Println(people)
+} // }}}
+
+func (ch *_clickhouse) InsertAlbum(batch driver.Batch, rel Release) {
+	// this API is way nicer than NamedExec, damn
+	if err := batch.AppendStruct(&struct {
+		AlbumId    int       `ch:"album_id"`
+		ArtistId   int       `ch:"artist_id"`
+		ArtistName string    `ch:"artist_name"`
+		Title      string    `ch:"title"`
+		DateAdded  time.Time `ch:"date_added"`
+		Year       int       `ch:"year"`
+		Rating     byte      `ch:"rating"`
+	}{
+		AlbumId:    rel.BasicInfo.Id,
+		ArtistId:   rel.BasicInfo.Artists[0].Id,
+		ArtistName: rel.BasicInfo.Artists[0].Name,
+		Title:      rel.BasicInfo.Title,
+		DateAdded:  Must(time.Parse(time.RFC3339, rel.DateAdded)),
+		Year:       rel.BasicInfo.Year,
+		Rating:     rel.Rating,
+	}); err != nil {
+		panic(err)
+	}
 }

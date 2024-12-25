@@ -13,6 +13,8 @@ import (
 
 // TODO: this looks interesting, but requires files that are invalid sql https://github.com/Davmuz/gqt
 
+// TODO: https://fractaledmind.github.io/2023/09/07/enhancing-rails-sqlite-fine-tuning/#pragmas-summary
+
 var (
 	s sqlite
 
@@ -162,7 +164,7 @@ func (s *sqlite) insert(
 
 // method must have no type parameters
 // https://stackoverflow.com/a/70668559
-// func (s *sql)query[T any]( query string, _ []T) []T {}
+// func (s *sqlite)query[T any]( query string, _ []T) []T {}
 
 func query[T any](
 	s *sqlite,
@@ -195,15 +197,18 @@ func query[T any](
 	// typical json.Unmarshal call.
 
 	var rows []T
-	if len(args) > 0 {
-		if err := s.db.Select(&rows, query, args...); err != nil {
-			panic(err)
-		}
-	} else {
-		if err := s.db.Select(&rows, query); err != nil {
-			panic(err)
-		}
+	if err := s.db.Select(&rows, query, args...); err != nil {
+		panic(err)
 	}
+	// if len(args) > 0 {
+	// 	if err := s.db.Select(&rows, query, args...); err != nil {
+	// 		panic(err)
+	// 	}
+	// } else {
+	// 	if err := s.db.Select(&rows, query); err != nil {
+	// 		panic(err)
+	// 	}
+	// }
 	return rows
 } // }}}
 

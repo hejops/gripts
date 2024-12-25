@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -50,8 +51,6 @@ func dumpDB(user string) { // {{{
 		Releases   []Release
 	}
 
-	tx := s.db.MustBegin()
-
 	for pg := 1; ; pg++ {
 		v.Set("page", strconv.Itoa(pg))
 		u.RawQuery = v.Encode()
@@ -72,31 +71,38 @@ func dumpDB(user string) { // {{{
 		err = json.Unmarshal(Must(io.ReadAll(resp.Body)), &x)
 		if err != nil {
 			panic(err)
-			// break
 		}
 		resp.Body.Close()
+
+		if pg > x.Pagination.Pages {
+			break
+		}
 
 		// note: these timings are not 100% fair since they include http get
 		// and Println
 		// sql trim 0.7 - 1.1 s
 		// go trim 0.7 - 1.1 s
 
-		for _, alb := range x.Releases {
-			s.InsertAlbum(tx, alb)
-			// TODO: implement for clickhouse
+		tx := s.db.MustBegin()
+		batch, err := ch.db.PrepareBatch(context.Background(), "INSERT INTO albums")
+		if err != nil {
+			panic(err)
 		}
 
-		if pg == x.Pagination.Pages {
-			break
+		for _, rel := range x.Releases {
+			s.InsertAlbum(tx, rel)
+			ch.InsertAlbum(batch, rel)
 		}
 
-		pg++
+		if err := tx.Commit(); err != nil {
+			panic(err)
+		}
+		if err := batch.Send(); err != nil {
+			panic(err)
+		}
+
+		fmt.Println(pg, "ok")
 		time.Sleep(time.Second)
 
-	}
-
-	err := tx.Commit()
-	if err != nil {
-		panic(err)
 	}
 } // }}}
