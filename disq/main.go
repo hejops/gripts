@@ -63,13 +63,12 @@ func init() {
 // TODO: https://fractaledmind.github.io/2023/09/07/enhancing-rails-sqlite-fine-tuning/#pragmas-summary
 
 func main() {
-	// dumpDB(os.Args[1])
-	// return
-
 	defer s.db.Close()
 
+	// dumpDB(os.Args[1])
 	fmt.Println(s.RandomAlbum())
 	fmt.Println(s.RandomAlbumFromArtist("Metallica"))
+	ch_main()
 
 	// m := model{table: sqlToTable(`SELECT * FROM collection`)}
 	// // all filtering shall be done via sql

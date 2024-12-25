@@ -16,7 +16,7 @@ type model struct {
 }
 
 func sqlToTable(query string, args ...any) table.Model {
-	sqlRows := []Row{}
+	sqlRows := []JoinedRow{}
 	if err := s.db.Select(&sqlRows, query, args...); err != nil {
 		panic(err)
 	}
