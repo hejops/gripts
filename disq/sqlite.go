@@ -18,7 +18,7 @@ import (
 var (
 	s sqlite
 
-	// The schema requires many double inner joins.
+	// The schema is normalised, and requires many double inner joins.
 	//go:embed queries/schema.sql
 	_schema string
 	//go:embed queries/select_random.sql
@@ -49,8 +49,8 @@ type (
 
 	// The result of select_random.sql
 	SimpleRow struct {
-		Album  string
-		Artist string
+		Album  string `ch:"title"`
+		Artist string `ch:"artist_name"`
 	}
 
 	// row schema from an old query
@@ -78,7 +78,7 @@ type (
 	}
 )
 
-func init() {
+func init_sqlite() {
 	// note: first db connection may be slow to build. this may not be an
 	// issue with clickhouse?
 

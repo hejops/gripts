@@ -95,7 +95,7 @@ func dumpDB(user string) { // {{{
 			panic(err)
 		}
 
-		fmt.Printf("%d/%d ok\n", pg, x.Pagination.Pages)
+		// fmt.Printf("%d/%d ok\n", pg, x.Pagination.Pages)
 		time.Sleep(2 * time.Second)
 
 	}

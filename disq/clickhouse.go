@@ -13,9 +13,19 @@ var ch _clickhouse
 
 type (
 	_clickhouse struct{ db driver.Conn }
+
+	ChRow struct {
+		AlbumId    uint32    `ch:"album_id"`
+		ArtistId   uint32    `ch:"artist_id"`
+		ArtistName string    `ch:"artist_name"`
+		Title      string    `ch:"title"`
+		DateAdded  time.Time `ch:"date_added"`
+		Year       uint32    `ch:"year"`
+		Rating     byte      `ch:"rating"`
+	}
 )
 
-func init() { // {{{
+func init_clickhouse() { // {{{
 	// https://clickhouse.com/docs/en/integrations/go#copy-in-some-sample-code
 
 	var (
@@ -81,7 +91,7 @@ func init() { // {{{
 	//
 	// https://clickhouse.com/docs/en/migrations/bigquery#primary-and-foreign-keys-and-primary-index
 
-	_ = ch.db.Exec(ctx, "DROP TABLE IF EXISTS albums")
+	// _ = ch.db.Exec(ctx, "DROP TABLE IF EXISTS albums")
 
 	schema := `
 CREATE TABLE IF NOT EXISTS albums (
@@ -98,7 +108,10 @@ CREATE TABLE IF NOT EXISTS albums (
 ENGINE = ReplacingMergeTree
 
 PRIMARY KEY (artist_name, rating, album_id)
+-- PRIMARY KEY (album_id, rating)
+-- PRIMARY KEY (album_id)
 `
+	// TODO: investigate query speed with different primary key(s)
 
 	if err := ch.db.Exec(ctx, schema); err != nil {
 		panic(err)
@@ -128,21 +141,13 @@ func ch_test() { // {{{
 
 func (ch *_clickhouse) InsertAlbum(batch driver.Batch, rel Release) {
 	// this API is way nicer than NamedExec, damn
-	if err := batch.AppendStruct(&struct {
-		AlbumId    int       `ch:"album_id"`
-		ArtistId   int       `ch:"artist_id"`
-		ArtistName string    `ch:"artist_name"`
-		Title      string    `ch:"title"`
-		DateAdded  time.Time `ch:"date_added"`
-		Year       int       `ch:"year"`
-		Rating     byte      `ch:"rating"`
-	}{
-		AlbumId:    rel.BasicInfo.Id,
-		ArtistId:   rel.BasicInfo.Artists[0].Id,
+	if err := batch.AppendStruct(&ChRow{
+		AlbumId:    uint32(rel.BasicInfo.Id),
+		ArtistId:   uint32(rel.BasicInfo.Artists[0].Id),
 		ArtistName: rel.BasicInfo.Artists[0].Name,
 		Title:      rel.BasicInfo.Title,
 		DateAdded:  Must(time.Parse(time.RFC3339, rel.DateAdded)),
-		Year:       rel.BasicInfo.Year,
+		Year:       uint32(rel.BasicInfo.Year),
 		Rating:     rel.Rating,
 	}); err != nil {
 		panic(err)
