@@ -153,3 +153,18 @@ func (ch *_clickhouse) InsertAlbum(batch driver.Batch, rel Release) {
 		panic(err)
 	}
 }
+
+// RandomAlbum selects n random albums without performing any filtering.
+func (ch *_clickhouse) RandomAlbum(n int) []ChRow {
+	var rows []ChRow
+	err := ch.db.Select(
+		context.Background(),
+		&rows,
+		"SELECT * FROM albums ORDER BY rand() LIMIT ?",
+		n,
+	)
+	if err != nil {
+		panic(err)
+	}
+	return rows
+}

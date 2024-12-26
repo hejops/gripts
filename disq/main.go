@@ -39,6 +39,12 @@ var (
 )
 
 func main() {
+	init_clickhouse()
+	defer ch.db.Close()
+
+	listen()
+	return
+
 	flag.Parse()
 
 	if *dump != "" {
