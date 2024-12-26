@@ -11,8 +11,9 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
-	"os"
 )
 
 // an exercise to work with data via:
@@ -31,15 +32,54 @@ import (
 
 // TODO: integrate with youtube, mpv
 
-func main() {
-	defer s.db.Close()
+var (
+	useSqlite     = flag.Bool("sqlite", false, "use sqlite")
+	useClickhouse = flag.Bool("clickhouse", false, "use clickhouse")
+	dump          = flag.String("dump", "", "dump collection of <user>")
+)
 
-	if len(os.Args) > 1 {
-		dumpDB(os.Args[1])
+func main() {
+	flag.Parse()
+
+	if *dump != "" {
+		dumpDB(*dump)
 	}
-	fmt.Println(s.RandomAlbum())
-	fmt.Println(s.RandomAlbumFromArtist("Metallica"))
-	ch_test()
+
+	if *useSqlite {
+		init_sqlite()
+		defer s.db.Close()
+
+		fmt.Println(s.RandomAlbum())
+		fmt.Println(s.RandomAlbumFromArtist("Metallica"))
+	}
+
+	if *useClickhouse {
+		init_clickhouse()
+		defer ch.db.Close()
+
+		var row []SimpleRow
+		err := ch.db.Select(
+			context.Background(),
+			&row,
+			"SELECT title, artist_name FROM albums ORDER BY rand() LIMIT 1",
+		)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(row)
+
+		err = ch.db.Select(
+			context.Background(),
+			&row,
+			"SELECT title, artist_name FROM albums WHERE artist_name = ? ORDER BY rand() LIMIT 1",
+			"Metallica",
+		)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(row)
+
+	}
 
 	// m := model{table: sqlToTable(`SELECT * FROM collection`)}
 	// // all filtering shall be done via sql
