@@ -1,19 +1,23 @@
-// TUI for Discogs collection
+// Browse a Discogs collection.
+//
+// The MVP dumps a user's collection and makes a query to select a random
+// album. This fits my primary use case of "I'm away from my local media
+// storage and want to listen to something I previously liked". This has
+// already been implemented, albeit in a hacky mix of go, jq and bash.
+//
+// A more sophisticated program would enable interactive browsing and filtering
+// of the collection, abstracting away complex logic with sql queries.
 
 package main
 
 import (
-	_ "embed"
-	"os"
-	"path/filepath"
-
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/jmoiron/sqlx"
-	_ "github.com/mattn/go-sqlite3"
+	"context"
+	"flag"
+	"fmt"
 )
 
 // an exercise to work with data via:
-// 1. raw SQL (db -> sqlx)
+// 1. raw SQL (db -> sqlx/clickhouse)
 // 2. SQL-ish (csv? -> go-duckdb) -- unusable!
 // 3. PRQL (csv -> duckdb-prql) -- this would just rely on go-duckdb, so no
 // 4. ORM (db -> gorm)
@@ -28,53 +32,66 @@ import (
 
 // TODO: integrate with youtube, mpv
 
-// type alias
-// type DBWrapper *sqlx.DB
-
-// const DBFile = "./collection.db"
-const DBFile = "./collection2.db"
-
-var s sql
-
-//go:embed schema.sql
-var schema string
-
-func init() {
-	// note: first db connection may be slow to build
-
-	// TODO: Once?
-	d, _ := os.Executable() // will be in /tmp for go run
-	s.db = sqlx.MustConnect(
-		"sqlite3",
-		filepath.Join(filepath.Dir(d), DBFile),
-	)
-}
-
-// TODO: https://fractaledmind.github.io/2023/09/07/enhancing-rails-sqlite-fine-tuning/#pragmas-summary
-
-//go:embed schema.sql
-var schema string
-
-func init() {
-	s.db.MustExec(schema)
-}
+var (
+	useSqlite     = flag.Bool("sqlite", false, "use sqlite")
+	useClickhouse = flag.Bool("clickhouse", false, "use clickhouse")
+	dump          = flag.String("dump", "", "dump collection of <user>")
+)
 
 func main() {
-	s.db.MustExec(schema)
-	dumpDB(os.Args[1])
+	init_clickhouse()
+	defer ch.db.Close()
+
+	listen()
 	return
 
-	defer s.db.Close()
+	flag.Parse()
 
-	lf, _ := tea.LogToFile("/tmp/didu.log", "didu")
-	defer lf.Close()
-
-	m := model{table: sqlToTable(`SELECT * FROM collection`)}
-
-	// all filtering shall be done via sql
-	if _, err := tea.NewProgram(&m).Run(); err != nil {
-		panic(err)
+	if *dump != "" {
+		dumpDB(*dump)
 	}
+
+	if *useSqlite {
+		init_sqlite()
+		defer s.db.Close()
+
+		fmt.Println(s.RandomAlbum())
+		fmt.Println(s.RandomAlbumFromArtist("Metallica"))
+	}
+
+	if *useClickhouse {
+		init_clickhouse()
+		defer ch.db.Close()
+
+		var row []SimpleRow
+		err := ch.db.Select(
+			context.Background(),
+			&row,
+			"SELECT title, artist_name FROM albums ORDER BY rand() LIMIT 1",
+		)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(row)
+
+		err = ch.db.Select(
+			context.Background(),
+			&row,
+			"SELECT title, artist_name FROM albums WHERE artist_name = ? ORDER BY rand() LIMIT 1",
+			"Metallica",
+		)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(row)
+
+	}
+
+	// m := model{table: sqlToTable(`SELECT * FROM collection`)}
+	// // all filtering shall be done via sql
+	// if _, err := tea.NewProgram(&m).Run(); err != nil {
+	// 	panic(err)
+	// }
 
 	// s.aggArtistRating()
 	// // TODO: https://github.com/rodaine/table?tab=readme-ov-file#usage

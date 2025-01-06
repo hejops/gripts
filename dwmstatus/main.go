@@ -135,17 +135,17 @@ func getRespBody(url string) string { // {{{
 	return string(bytes)
 } // }}}
 // Remove empty elements from arr
-func filter(arr []string) []string { // {{{
-	// i would use a generic, but idk how to generalise null type
+func filter[T comparable](arr []T) []T { // {{{
 	// https://josh-weston.scribe.rip/golang-in-place-slice-operations-5607fd90217
 
 	// filter a slice in place without allocating, use two slices with the
 	// same backing array
 	// see also: https://stackoverflow.com/a/50183212
 
+	var zero T
 	i := 0
 	for _, v := range arr {
-		if v != "" {
+		if v != zero {
 			arr[i] = v // overwrite the original slice
 			i++
 		}
@@ -224,8 +224,8 @@ func weather() string { // {{{
 	req.Header.Set("User-Agent", "github.com/hejops/dwmstatus")
 
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		panic(err)
+	if err != nil { // ignore network errors
+		return ""
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -271,7 +271,6 @@ func weather() string { // {{{
 		minT,
 		maxT,
 	)
-	fmt.Println(wt)
 
 	return wt
 } // }}}

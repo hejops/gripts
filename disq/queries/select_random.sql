@@ -7,15 +7,17 @@ SELECT
     group_concat(artists.name, ' ') AS artist
 FROM
     (
-        -- TODO: qualifying the refs (e.g. albums.id) breaks random func for no
-        -- reason
+        -- note: to satisfy sqlfluff, columns are qualified with their table name
+        -- (e.g. albums.id instead of id). additionally, sqlfluff recommends
+        -- this be applied to functions as well. however, sqlite does not support
+        -- this 'method'-ish syntax
         -- https://docs.sqlfluff.com/en/stable/reference/rules.html#column-references-should-be-qualified-consistently-in-single-table-statements
+        -- https://www.sqlite.org/lang_corefunc.html#random
         SELECT
             albums.id,
             albums.title
         FROM albums
         WHERE albums.rating >= 3
-        -- AND id = 2691647
         ORDER BY random() LIMIT 1
     ) AS rand
 INNER JOIN albums_artists

@@ -1,0 +1,24 @@
+package main
+
+import "strconv"
+
+templ tableRows(rows []ChRow) {
+	<html>
+		<table>
+			<tr>
+				<th>#</th>
+				<th>Artist</th>
+				<th>Album</th>
+				<th>Rating</th>
+			</tr>
+			for i, row := range rows {
+				<tr>
+					<td>{ strconv.Itoa(i+1) }</td>
+					<td>{ row.ArtistName }</td>
+					<td>{ row.Title }</td>
+					<td>{ strconv.Itoa(int(row.Rating)) }</td>
+				</tr>
+			}
+		</table>
+	</html>
+}
