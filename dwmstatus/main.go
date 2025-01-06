@@ -364,14 +364,18 @@ func nowplaying() string { // {{{
 	return np
 } // }}}
 
-// fetching mail is handled by a systemd timer
+// fetching mail is handled by a cronjob
 func mail() string {
 	cmd := exec.Command(
 		"notmuch",
 		strings.Fields("count tag:inbox and tag:unread and date:today")...,
+	// strings.Fields("count tag:inbox and tag:unread and tag:new and date:today")...,
 	)
+	// TODO: env not loaded? (again???)
+	_ = os.WriteFile("/tmp/dwmstatus.log", []byte(strings.Join(os.Environ(), "\n")), os.ModePerm)
 	cmd.Env = os.Environ()
 	out, err := execRawCommand(*cmd)
+	fmt.Println(out)
 	switch {
 	case err != nil:
 		return "mail error"
@@ -381,14 +385,6 @@ func mail() string {
 		return out + " new mail"
 	}
 }
-
-// func updates() string {
-// 	bytes, err := exec.Command("checkupdates").Output() // exit code 2 if no updates
-// 	if err != nil {
-// 		return ""
-// 	}
-// 	return strconv.Itoa(lines(string(bytes))) + " updates"
-// }
 
 func network() string {
 	// name := getCmdOutputWithFallback("iwgetid -r", "No network")
@@ -494,13 +490,17 @@ func netBytes() int {
 	if err != nil {
 		panic(err)
 	}
-	var x []struct {
+	var sources []struct {
 		Stats64 struct{ Rx struct{ Bytes int } }
 	}
-	if err := json.Unmarshal(b, &x); err != nil {
+	if err := json.Unmarshal(b, &sources); err != nil {
 		panic(err)
 	}
-	return x[2].Stats64.Rx.Bytes
+	var sum int
+	for _, x := range sources {
+		sum += x.Stats64.Rx.Bytes
+	}
+	return sum
 }
 
 func main() {
