@@ -1,3 +1,5 @@
+-- artists with more than 3 ratings, and with average rating 2.7 (out of 5)
+
 -- assign query result to table
 -- https://www.postgresql.org/docs/current/queries-with.html#QUERIES-WITH-SELECT
 WITH joined AS (
@@ -10,7 +12,7 @@ WITH joined AS (
     ORDER BY albums.rating DESC
 ),
 
-top_three AS (
+at_least_three_ratings AS (
     SELECT
         name,
         title,
@@ -30,6 +32,6 @@ top_three AS (
 SELECT
     name,
     avg(rating) AS rs
-FROM top_three
+FROM at_least_three_ratings
 GROUP BY name
 HAVING avg(rating) >= 2.7 -- jsb ~ 2.77
