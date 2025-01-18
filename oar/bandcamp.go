@@ -70,7 +70,7 @@ func getBandcampLabels() []BandcampLabel { // {{{
 
 	b, err := json.Marshal(map[string]string{
 		"fan_id": id,
-		// hack: setting older_than_token to current epoch, and count
+		// HACK: setting older_than_token to current epoch, and count
 		// to some large int returns all items in a single resp
 		// "older_than_token": "9999999999:9999999999",
 		"older_than_token": t + ":" + t,
@@ -217,8 +217,6 @@ func getBandcampReleases() []BandcampRelease {
 	// bar := pb.Full.Start(len(labels))
 
 	// single bar
-
-	// 8m15 / 261 labels
 
 	// counters = number of processed items
 	barTemplate := `{{string . "prefix"}} {{counters .}}/{{string . "total"}} {{etime .}}` // {{speed . "[%s/s]" ""}}`

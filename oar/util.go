@@ -23,6 +23,10 @@ func getRetry(_url string) *http.Response {
 	// 30s -- 7m24
 	// 15s -- 25m33 (panic)
 
+	// 60s
+	// 261/261 8m14s
+	// 268/268 12m41s
+
 	i := 0
 	for {
 		resp, err := http.Get(_url)
@@ -35,8 +39,8 @@ func getRetry(_url string) *http.Response {
 		// 	fmt.Println("tried", i, url)
 		// 	fallthrough
 		default:
-			// time.Sleep(time.Minute)
-			time.Sleep(time.Second * 30)
+			time.Sleep(time.Minute)
+			// time.Sleep(time.Second * 30)
 			i++
 		}
 	}
