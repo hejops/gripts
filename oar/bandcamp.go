@@ -52,6 +52,10 @@ func getBandcampLabels() []BandcampLabel { // {{{
 		panic(err)
 	}
 
+	if s, _ := doc.First().Html(); s == "" {
+		panic("empty document, probably rate limited")
+	}
+
 	// fmt.Println(doc.First().Html())
 
 	// <button id="follow-unfollow_12345" type="button" class="follow-unfollow ">
