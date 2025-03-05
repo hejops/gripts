@@ -15,6 +15,8 @@ import (
 
 // TODO: https://fractaledmind.github.io/2023/09/07/enhancing-rails-sqlite-fine-tuning/#pragmas-summary
 
+const DBFile = "./collection2.db"
+
 var (
 	s sqlite
 
@@ -84,8 +86,6 @@ func init_sqlite() {
 
 	// try cwd first (go run), then fallback to wherever the binary is
 	// ('prod')
-
-	const DBFile = "./collection2.db"
 
 	var db_path string
 	if _, err := os.Stat(DBFile); err == nil {
@@ -168,7 +168,6 @@ func (s *sqlite) insert(
 
 func query[T any](
 	s *sqlite,
-	_ []T,
 	query string,
 	args ...any, // not ...string!
 ) []T { // {{{
@@ -213,8 +212,10 @@ func query[T any](
 } // }}}
 
 // RandomAlbum selects a random album with rating >= 3
-func (s *sqlite) RandomAlbum() []SimpleRow { return query(s, []SimpleRow{}, _select_random) }
+func (s *sqlite) RandomAlbum() []SimpleRow {
+	return query[SimpleRow](s, _select_random)
+}
 
 func (s *sqlite) RandomAlbumFromArtist(artist string) []string {
-	return query(s, []string{}, _select_random_from_artist, artist)
+	return query[string](s, _select_random_from_artist, artist)
 }
