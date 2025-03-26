@@ -147,8 +147,11 @@ func (s *sqlite) insert(
 	for _, k := range keys {
 		ckeys = append(ckeys, ":"+k)
 	}
+	// replacing all non-pk columns is fine
+	// https://www.sqlite.org/draft/lang_UPSERT.html
+	// https://stackoverflow.com/a/4330694
 	query := `
-	INSERT OR IGNORE INTO ` + table + `
+	INSERT OR REPLACE INTO ` + table + `
 		(` + strings.Join(keys, ",") + `)
 	VALUES
 		(` + strings.Join(ckeys, ",") + `)
