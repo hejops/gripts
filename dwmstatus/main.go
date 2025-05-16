@@ -6,12 +6,13 @@
 //
 // Until I find native Go equivalents, the following executables are required:
 //	df, free, iwgetid, top, sensors, playerctl
+//
+// No non-stdlib imports are allowed.
 
 package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -41,7 +42,8 @@ var (
 	fastInterval = 5 * time.Second
 	slowInterval = 10 * time.Minute
 
-	lastBytes = netBytes()
+	lastBytes       = netBytes()
+	currentLocation = getLocation()
 
 	MachineName = readFile("/sys/devices/virtual/dmi/id/product_name")
 	MailCache   = Cacher{
@@ -49,7 +51,6 @@ var (
 		value:    mail(),
 		interval: int(slowInterval.Seconds() / fastInterval.Seconds()),
 	}
-	Location *location
 )
 
 type Cacher struct {
@@ -162,13 +163,11 @@ type location struct {
 // Determine current location using a geolocation service. Should only be run
 // once, on startup.
 //
-// Returns empty string on encountering any error.
-//
 // Note: accuracy can be poor, depending on geolocation, and weather provider
-func getLocation() (*location, error) { // {{{
+func getLocation() *location { // {{{
 	resp, err := http.Get("https://ipinfo.io")
 	if err != nil {
-		return nil, errors.New("geolocation failed")
+		return nil //, errors.New("geolocation failed")
 	}
 	defer resp.Body.Close()
 
@@ -180,7 +179,7 @@ func getLocation() (*location, error) { // {{{
 
 	err = json.NewDecoder(resp.Body).Decode(&obj)
 	if err != nil {
-		return nil, errors.New("weather lookup failed")
+		return nil //, errors.New("weather lookup failed")
 	}
 
 	latlon := strings.Split(obj.Loc, ",")
@@ -191,14 +190,14 @@ func getLocation() (*location, error) { // {{{
 		City: obj.City,
 		Lat:  float32(lat),
 		Lon:  float32(lon),
-	}, nil
+	} //, nil
 } // }}}
 // Uses wttr.in for ease of parsing
 func weather() string { // {{{
 	// curl -sL ipinfo.io
 	// curl --max-time 1 --fail -sL "wttr.in/$location?format=%C,+%t+(%s)"
 
-	if Location == nil {
+	if currentLocation == nil {
 		return ""
 	}
 
@@ -246,8 +245,7 @@ func weather() string { // {{{
 		}
 	}
 
-	err = json.Unmarshal(body, &x)
-	if err != nil {
+	if err := json.Unmarshal(body, &x); err != nil {
 		panic(err)
 	}
 
@@ -337,6 +335,8 @@ func disk() string {
 }
 
 func nowplaying() string { // {{{
+	// a marquee is not too hard to implement, but the 5 second interval
+	// makes this a moot point
 	status, err := exec.Command("playerctl", "status").Output()
 	if err != nil {
 		return ""
@@ -361,9 +361,7 @@ func mail() string {
 	cmd := exec.Command(
 		"notmuch",
 		strings.Fields("count tag:inbox and tag:unread and date:today")...,
-	// strings.Fields("count tag:inbox and tag:unread and tag:new and date:today")...,
 	)
-	// TODO: env not loaded? (again???)
 	_ = os.WriteFile("/tmp/dwmstatus.log", []byte(strings.Join(os.Environ(), "\n")), os.ModePerm)
 	cmd.Env = os.Environ()
 	out, err := execRawCommand(*cmd)
@@ -497,11 +495,6 @@ func netBytes() int {
 
 func main() {
 	// checkRestart()
-	// fmt.Println(2)
-	l, err := getLocation()
-	if err == nil {
-		Location = l
-	}
 
 	// https://stackoverflow.com/a/40364927
 	fastTick := time.NewTicker(fastInterval)
@@ -512,9 +505,13 @@ func main() {
 
 	for {
 		select {
+
 		case <-fastTick.C:
 			a = fastLoop()
-
+			// note: mail is fetched immediately after login, but
+			// update can only be called 10 mins after login.
+			// fetching mail should not be the responsibility of
+			// this program
 			MailCache.update()
 
 		case <-slowTick.C:
@@ -523,12 +520,7 @@ func main() {
 
 		// [slow] + [fast]
 		merged := append(b, a...)
-		merged = append(
-			[]string{
-				MailCache.value,
-			},
-			merged...,
-		)
+		merged = append([]string{MailCache.value}, merged...)
 		msg := strings.Join(filter(merged), Separator)
 		msg = MachineName + " > " + msg
 
