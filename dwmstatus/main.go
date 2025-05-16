@@ -202,19 +202,12 @@ func weather() string { // {{{
 		return ""
 	}
 
-	// wt := getRespBody(
-	// 	fmt.Sprintf(
-	// 		"https://wttr.in/%s?format=%%C,+%%t+(%%s)",
-	// 		url.QueryEscape(Location.City),
-	// 	),
-	// )
-
 	req, err := http.NewRequest(
 		"GET",
 		fmt.Sprintf(
-			"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=%d&lon=%d",
-			int(Location.Lat),
-			int(Location.Lat),
+			"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=%f&lon=%f",
+			currentLocation.Lat,
+			currentLocation.Lon,
 		),
 		nil,
 	)
