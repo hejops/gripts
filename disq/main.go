@@ -35,31 +35,35 @@ import (
 var (
 	useSqlite     = flag.Bool("sqlite", false, "use sqlite")
 	useClickhouse = flag.Bool("clickhouse", false, "use clickhouse")
-	dump          = flag.String("dump", "", "dump collection of <user>")
+	user          = flag.String("dump", "", "dump collection of <user>")
 )
 
+func init() {
+}
+
 func main() {
-	init_clickhouse()
-	defer ch.db.Close()
-
-	listen()
-	return
-
 	flag.Parse()
 
-	if *dump != "" {
-		dumpDB(*dump)
-	}
+	switch {
+	case *user != "":
+		fmt.Println("dumping", *user)
+		init_sqlite() // TODO: wrap in Once
+		defer s.db.Close()
+		// init_clickhouse() // needs running server instance
+		// defer ch.db.Close()
+		dumpDB(*user)
+		fmt.Println("done")
+		return
 
-	if *useSqlite {
+	case *useSqlite:
 		init_sqlite()
 		defer s.db.Close()
 
-		fmt.Println(s.RandomAlbum())
-		fmt.Println(s.RandomAlbumFromArtist("Metallica"))
-	}
+		// fmt.Println(s.RandomAlbum())
+		// fmt.Println(s.RandomAlbumFromArtist("Metallica"))
+		fmt.Println(s.AllAlbumsFromArtist("aespa"))
 
-	if *useClickhouse {
+	case *useClickhouse:
 		init_clickhouse()
 		defer ch.db.Close()
 
@@ -85,6 +89,8 @@ func main() {
 		}
 		fmt.Println(row)
 
+	default:
+		listen()
 	}
 
 	// m := model{table: sqlToTable(`SELECT * FROM collection`)}

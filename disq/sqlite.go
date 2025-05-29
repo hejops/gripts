@@ -2,6 +2,8 @@ package main
 
 import (
 	_ "embed"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,10 +29,12 @@ var (
 	_select_random string
 	//go:embed queries/select_random_from_artist.sql
 	_select_random_from_artist string
+	//go:embed queries/select_from_artist.sql
+	_select_all_from_artist string
 )
 
-// Wrapper over *sqlx.DB
 type (
+	// Wrapper over *sqlx.DB
 	sqlite struct {
 		// *sqlx.DB // can use db.Close() (etc) directly, but compiler complains
 
@@ -51,8 +55,8 @@ type (
 
 	// The result of select_random.sql
 	SimpleRow struct {
-		Album  string `ch:"title"`
-		Artist string `ch:"artist_name"`
+		Album  string `ch:"title"       ,db:"album"`
+		Artist string `ch:"artist_name" ,db:"artist"`
 	}
 
 	// row schema from an old query
@@ -81,20 +85,26 @@ type (
 )
 
 func init_sqlite() {
-	// note: first db connection may be slow to build. this may not be an
-	// issue with clickhouse?
+	// note: first db connection tends to be very slow to build. this does
+	// not happen with clickhouse
 
 	// try cwd first (go run), then fallback to wherever the binary is
 	// ('prod')
 
-	var db_path string
-	if _, err := os.Stat(DBFile); err == nil {
-		cwd, _ := os.Getwd()
-		db_path = filepath.Join(cwd, DBFile)
-	} else {
-		bin, _ := os.Executable() // binary will be in /tmp for go run
-		db_path = filepath.Join(filepath.Dir(bin), DBFile)
-	}
+	// var db_path string
+	// if _, err := os.Stat(DBFile); err == nil {
+	// 	// binary will be in /tmp for go run
+	// 	// TODO: final binary will reach this arm, instead of the next
+	// 	cwd, _ := os.Getwd()
+	// 	db_path = filepath.Join(cwd, DBFile)
+	// } else {
+	// 	bin, _ := os.Executable()
+	// 	db_path = filepath.Join(filepath.Dir(bin), DBFile)
+	// }
+
+	bin, _ := os.Executable()
+	db_path := filepath.Join(filepath.Dir(bin), DBFile)
+	fmt.Println(db_path)
 
 	s.db = sqlx.MustConnect("sqlite3", db_path)
 	s.db.MustExec(_schema)
@@ -142,9 +152,10 @@ func (s *sqlite) insert(
 	// VALUES
 	//         (:title,:year,:rating,:date_added,:id)
 
-	keys := Keys(m)
+	var keys []string
 	var ckeys []string
-	for _, k := range keys {
+	for k := range maps.Keys(m) {
+		keys = append(keys, k)
 		ckeys = append(ckeys, ":"+k)
 	}
 	// replacing all non-pk columns is fine
@@ -217,6 +228,10 @@ func query[T any](
 // RandomAlbum selects a random album with rating >= 3
 func (s *sqlite) RandomAlbum() []SimpleRow {
 	return query[SimpleRow](s, _select_random)
+}
+
+func (s *sqlite) AllAlbumsFromArtist(artist string) []SimpleRow {
+	return query[SimpleRow](s, _select_all_from_artist, artist)
 }
 
 func (s *sqlite) RandomAlbumFromArtist(artist string) []string {
