@@ -42,6 +42,9 @@ func getYoutubeChannelUploads(uploaderId string) []YoutubeVideo {
 		if !ok {
 			return false
 		}
+		if strings.Contains(url, "/shorts/") {
+			return true
+		}
 		t, err := time.Parse(
 			time.RFC3339, // not entirely sure
 			s.Find("published").First().Text(),
