@@ -52,8 +52,17 @@ func download(title string, url string, bar *pb.ProgressBar) error { // concrete
 		return nil
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	maxMinutes := 60
+	meta, _ := goutubedl.New(context.TODO(), url, goutubedl.Options{})
+	if dur := int(meta.Info.Duration) / maxMinutes; dur > 60 {
+		return fmt.Errorf("skipping long video (%d min)", dur)
+	}
+
 	res, err := goutubedl.Download(
-		context.Background(),
+		ctx,
 		url,
 		goutubedl.Options{
 			// only relevant for bc
