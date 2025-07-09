@@ -4,14 +4,12 @@ set -euo pipefail
 # pip install scrobblerh
 
 cd "$(dirname "$(realpath "$0")")"
-db=./collection.db
+db=./collection2.db
 
 ignore23() { [ $? -eq 23 ] && :; }
 
-while true; do
-	query=$(< ./select_random.sql sqlite3 "$db" | tr '|' ' ')
-	echo "$query"
-
+yt() {
+	query=$1
 	id=$(
 		curl -sL 'https://music.youtube.com/youtubei/v1/search' -H 'Content-Type: application/json' --data-raw '{"context":{"client":{"clientName":"WEB_REMIX","clientVersion":"1.20240904.01.01"}},"query":"'"$query"'","params":"EgWKAQIIAWoSEAMQBBAJEA4QChAFEBEQEBAV"}' |
 			grep -m1 '"MP' |
@@ -29,4 +27,21 @@ while true; do
 	echo "$url"
 	echo
 	mpv --no-video --no-audio-display "$url" || :
+}
+
+while true; do
+	query=$(< ./queries/select_random.sql sqlite3 "$db" |
+		tr '|' /)
+
+	if [[ -d $MU ]]; then
+		d=$MU/$query
+		ls "$d"* > /dev/null 2> /dev/null || continue
+		echo "$query"
+		mpv --mute=no --no-audio-display --pause=no --start=0% "$d"*
+
+	else
+		echo "$query"
+		yt "$query"
+
+	fi
 done
