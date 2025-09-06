@@ -6,89 +6,74 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"github.com/cheggaaa/pb/v3"
 )
+
+// pb stopped working on go 1.25.1
 
 const (
 	MaxConcurrent = 5 // youtube-only
-
-	Spinner = `{{ cycle . "⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏" }}`
-	// https://github.com/hetznercloud/cli/blob/b59cfbfdb338bad3a7b80c0569248a8e3abaad01/internal/ui/progress_terminal.go#L34
-
-	BarTemplate = `{{string . "prefix"}} {{counters .}} {{bar .}} {{rtime .}} {{speed . "[%s/s]" ""}}`
-	// https://github.com/cheggaaa/pb/blob/master/v3/element.go#L36
-	// for i/o, counters = total size
-
-	SpinnerTemplate = `{{string . "prefix"}} ` + Spinner
 )
 
 func main() {
 	LoadConfig()
 
-	for i, r := range getBandcampReleases() {
-
-		// note: concurrent downloads are avoided because rate-limiting
-		// would be almost guaranteed
-
-		_ = r.Download(pb.Full.New(0))
-		fmt.Println("ok:", i, r.Url)
-	}
-
-	videos := getYoutubeVideos()
-
-	pool, err := pb.StartPool()
-	if err != nil {
-		panic(err)
-	}
-
 	var wg sync.WaitGroup
-	var errs int
-
-	for i, v := range videos {
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-
-			// bars should only be added when needed (otherwise all
-			// bars will be rendered immediately)
-			b := pb.Full.New(0).
-				Set("prefix", v.Url).
-				SetRefreshRate(time.Second).
-				// SetTemplateString(BarTemplate)
-				SetTemplateString(SpinnerTemplate)
-			pool.Add(b)
-
-			b.Start()
-			// TODO: handle 403 / Sign in
-			if err := v.Download(b); err != nil {
-				b.SetCurrent(int64(100))
-				b.SetTemplateString(`{{string . "prefix" }} ` + err.Error())
-				// b.SetTemplateString("\r")
-				b.Finish()
-				errs++
-				return
+	var numBcOk uint
+	wg.Go(func() {
+		defer wg.Done()
+		for _, label := range getBandcampLabels() {
+			for _, r := range label.Releases() {
+				if err := r.Download(nil); err == nil {
+					numBcOk++
+					fmt.Println(numBcOk, "bc:", r.URL)
+				}
 			}
-			// change style when done
-			b.SetCurrent(int64(100))
-			b.SetTemplateString(`{{string . "prefix" }} done`)
-			b.Finish()
-			// wg.Done() // blocks eternally!
-		}()
+			time.Sleep(2 * time.Second)
+		}
+	})
+
+	var wg2 sync.WaitGroup
+	var errs sync.Map // concurrent map writes lead to panic
+	// durations := make(map[uint][]string)
+
+	for i, v := range getYoutubeVideos() {
+		wg2.Go(func() {
+			// now := time.Now()
+
+			if err := v.Download(nil); err != nil {
+				errs.Store(v.URL, err)
+			} else {
+				fmt.Println(i, "yt:", v.URL)
+			}
+
+			// dur := uint(time.Since(now).Seconds())
+			// durations[dur] = append(durations[dur], v.URL)
+		})
 
 		// limit concurrent downloads
 		if (i+1)%MaxConcurrent == 0 {
-			wg.Wait()
+			wg2.Wait()
 		}
-
 	}
+
+	wg2.Wait()
 	wg.Wait()
-	if err := pool.Stop(); err != nil {
-		panic(err)
+
+	for url, e := range errs.Range {
+		fmt.Println(url, e)
 	}
 
-	fmt.Println(errs, "errors")
+	// keys := slices.Collect(maps.Keys(durations))
+	// slices.Sort(keys)
+	// var tot, n uint
+	// for _, k := range keys {
+	// 	if k > 15 {
+	// 		fmt.Println(k, durations[k])
+	// 	}
+	// 	tot += k
+	// 	n++
+	// }
+	// fmt.Println("average yt download duration:", tot/n)
 
 	// browseFiles(Cfg.Dest)
 }
