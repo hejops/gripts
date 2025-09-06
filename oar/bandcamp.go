@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,6 +104,9 @@ func getBandcampLabels() []BandcampLabel { // {{{
 		Followeers []BandcampLabel // 'followeers' is not a typo
 	}
 	_ = json.Unmarshal(bb, &x)
+	slices.SortFunc(x.Followeers, func(a, b BandcampLabel) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
 	return x.Followeers
 } // }}}
 
